@@ -9,7 +9,7 @@ struct DM: Codable {
 }
 
 // --- 「会話スレッド」を表すための設計図 ---
-struct Thread: Codable, Identifiable {
+struct Thread: Codable, Identifiable, Hashable {
     let threadId: String
     let participants: [String]
     let questionTitle: String

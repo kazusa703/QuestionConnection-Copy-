@@ -61,8 +61,8 @@ struct SetNicknameView: View {
     
     /// ニックネームを保存する関数
     private func saveNickname() {
-        // 必要な情報（自分のID、idToken）を取得
-        guard let userId = authViewModel.userSub, let idToken = authViewModel.idToken else {
+        // 必要な情報（自分のID）を取得 (idToken を削除)
+        guard let userId = authViewModel.userSub else {
             profileViewModel.nicknameAlertMessage = "認証情報が見つかりません。"
             profileViewModel.showNicknameAlert = true
             return
@@ -75,19 +75,20 @@ struct SetNicknameView: View {
         Task {
             // ★★★ ViewModelのnicknameプロパティを一時的に上書き ★★★
             profileViewModel.nickname = inputNickname
-            await profileViewModel.updateNickname(userId: userId, idToken: idToken)
-            // ★★★ ここまで ★★★
+            // ★★★ idToken 引数を削除 ★★★
+            await profileViewModel.updateNickname(userId: userId)
         }
     }
 }
 
-// --- プレビュー用のコード ---
+// --- プレビュー用のコード (修正) ---
 #Preview {
-    // ダミーのViewModelを作成してプレビュー
-    let authVM = AuthViewModel() // ダミー
-    let profileVM = ProfileViewModel() // ダミー
+    // initが変更されたことを想定し、ダミーのAuthViewModelを作成して渡す
+    let authVM = AuthViewModel()
+    let profileVM = ProfileViewModel(authViewModel: authVM) // init変更を想定
     
     return SetNicknameView()
         .environmentObject(authVM)
         .environmentObject(profileVM)
 }
+

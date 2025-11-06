@@ -1,19 +1,22 @@
 import SwiftUI
 
 struct ProfileView: View {
-    // ★★★ 修正: @StateObject を @EnvironmentObject に変更 ★★★
     @EnvironmentObject private var viewModel: ProfileViewModel
-    
     @EnvironmentObject private var authViewModel: AuthViewModel
     @Environment(\.showAuthenticationSheet) private var showAuthenticationSheet
+
+    @State private var originalNickname: String = ""
+
+    private var isNicknameChanged: Bool {
+        viewModel.nickname != originalNickname
+    }
 
     var body: some View {
         NavigationStack {
             if authViewModel.isSignedIn {
-                // --- ログイン済みユーザー向けの表示 ---
                 Form {
-                    // --- ユーザー情報セクション ---
                     Section(header: Text("ユーザー情報")) {
+                        // --- Email表示 ---
                         HStack {
                             Text("Email")
                                 .font(.callout)
@@ -24,48 +27,45 @@ struct ProfileView: View {
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                         }
-                        
+
+                        // --- ニックネーム入力 ---
                         HStack(alignment: .center) {
                             Text("ニックネーム")
                                 .font(.callout)
                                 .frame(width: 90, alignment: .leading)
-                            
+
                             TextField("DMなどで表示される名前", text: $viewModel.nickname)
                                 .textFieldStyle(.roundedBorder)
-                            
+                                .background(isNicknameChanged ? Color.yellow.opacity(0.1) : Color.clear)
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+
                             if viewModel.isNicknameLoading {
                                 ProgressView()
                                     .padding(.leading, 5)
+                            } else {
+                                Image(systemName: isNicknameChanged ? "pencil.circle.fill" : "checkmark.circle.fill")
+                                    .foregroundColor(isNicknameChanged ? .orange : .green)
+                                    .padding(.leading, 5)
                             }
                         }
-                        
-                        Button(action: {
-                            guard let userId = authViewModel.userSub, let idToken = authViewModel.idToken else {
-                                viewModel.nicknameAlertMessage = "認証情報がありません。再ログインしてください。"
-                                viewModel.showNicknameAlert = true
-                                return
-                            }
-                            // キーボードを閉じる
-                            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                            
-                            Task {
-                                await viewModel.updateNickname(userId: userId, idToken: idToken)
-                            }
-                        }) {
+
+                        // --- ニックネーム保存ボタン ---
+                        Button(action: saveNicknameAction) {
                             HStack {
                                 Spacer()
-                                Text("ニックネームを保存")
+                                Text(isNicknameChanged ? "変更を保存" : "保存済み")
                                 Spacer()
                             }
                         }
-                        .disabled(viewModel.isNicknameLoading)
-                    }
+                        .disabled(viewModel.isNicknameLoading || !isNicknameChanged)
+
+                    } // End Section User Info
                     .alert("プロフィール", isPresented: $viewModel.showNicknameAlert) {
                         Button("OK") { }
                     } message: {
                         Text(viewModel.nicknameAlertMessage ?? "不明なエラー")
                     }
-                    
+
                     // --- クイズ成績セクション ---
                     Section(header: Text("クイズ成績")) {
                         if viewModel.isLoadingUserStats {
@@ -87,7 +87,7 @@ struct ProfileView: View {
                             Text("まだ質問を作成していません。").foregroundColor(.secondary)
                         } else {
                             List(viewModel.myQuestions) { question in
-                                NavigationLink(destination: QuestionAnalyticsView(question: question)) {
+                                NavigationLink(destination: QuestionAnalyticsView(question: question).environmentObject(viewModel)) {
                                     VStack(alignment: .leading) {
                                         Text(question.title).font(.headline)
                                         Text("タグ: \(question.tags.joined(separator: ", "))").font(.caption).foregroundColor(.secondary)
@@ -97,7 +97,8 @@ struct ProfileView: View {
                         }
                     }
 
-                    // --- ログアウトボタンセクション ---
+                    // --- ★★★ 修正: ログアウトボタンセクションを削除 ★★★ ---
+                    /*
                     Section {
                         Button(role: .destructive) {
                             authViewModel.signOut()
@@ -105,23 +106,35 @@ struct ProfileView: View {
                             Text("ログアウト")
                         }
                     }
+                    */
+
                 } // End Form
-                .navigationTitle("プロフィール")
                 .onAppear {
-                    // ログイン時のみデータを取得
                     fetchProfileData()
                 }
                 .refreshable {
-                    // ログイン時のみデータを取得
                     fetchProfileData()
                 }
                 .onChange(of: authViewModel.isSignedIn) { _, isSignedIn in
                      if !isSignedIn {
-                          viewModel.myQuestions = []
-                          viewModel.userStats = nil
-                          viewModel.analyticsResult = nil
-                          viewModel.nickname = ""
+                          resetLocalState()
+                     } else {
+                         fetchProfileData()
                      }
+                }
+                // --- ★★★ 追加: ツールバーに設定ボタンを追加 ★★★ ---
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                                            // ★★★ 修正: Button を NavigationLink に変更 ★★★
+                                            NavigationLink {
+                                                // 遷移先のViewを指定
+                                                SettingsView()
+                                                    .environmentObject(authViewModel) // 遷移先にもViewModelを渡す
+                                            } label: {
+                                                // リンクの見た目として歯車アイコンを表示
+                                                Image(systemName: "gearshape")
+                                            }
+                    }
                 }
 
             } else {
@@ -139,25 +152,46 @@ struct ProfileView: View {
                     .buttonStyle(.borderedProminent)
                 }
                 .padding()
-                .navigationTitle("プロフィール")
             }
         } // End NavigationStack
     } // End body
 
-    // fetchProfileData (変更なし)
-    private func fetchProfileData() {
-        guard authViewModel.isSignedIn,
-              let userId = authViewModel.userSub,
-              let idToken = authViewModel.idToken else { return }
-        
-        Task {
-            // 3つの非同期処理を並行して実行
-            async let fetchQuestionsTask: () = await viewModel.fetchMyQuestions(authorId: userId)
-            async let fetchStatsTask: () = await viewModel.fetchUserStats(userId: userId)
-            async let fetchNicknameTask: () = await viewModel.fetchMyProfile(userId: userId, idToken: idToken)
+    // (saveNicknameAction, fetchProfileData, resetLocalState 関数は変更なし)
+    private func saveNicknameAction() {
+            guard let userId = authViewModel.userSub else {
+                viewModel.nicknameAlertMessage = "認証情報がありません。再ログインしてください。"
+                viewModel.showNicknameAlert = true
+                return
+            }
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
             
-            // すべての完了を待つ
-            _ = await [fetchQuestionsTask, fetchStatsTask, fetchNicknameTask]
+            Task {
+                await viewModel.updateNickname(userId: userId)
+                if viewModel.nicknameAlertMessage == "ニックネームを保存しました。" {
+                    originalNickname = viewModel.nickname
+                }
+            }
+        }
+
+        private func fetchProfileData() {
+            guard authViewModel.isSignedIn,
+                  let userId = authViewModel.userSub else { return }
+            
+            Task {
+                async let fetchQuestionsTask: () = await viewModel.fetchMyQuestions(authorId: userId)
+                async let fetchStatsTask: () = await viewModel.fetchUserStats(userId: userId)
+                async let fetchNicknameTask: () = await viewModel.fetchMyProfile(userId: userId)
+                
+                _ = await [fetchQuestionsTask, fetchStatsTask, fetchNicknameTask]
+                originalNickname = viewModel.nickname
+            }
+        }
+
+        private func resetLocalState() {
+             viewModel.myQuestions = []
+             viewModel.userStats = nil
+             viewModel.analyticsResult = nil
+             viewModel.nickname = ""
+             originalNickname = ""
         }
     }
-}

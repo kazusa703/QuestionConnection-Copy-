@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - QuizItemFormView (変更なし)
+// MARK: - QuizItemFormView
 struct QuizItemFormView: View {
     @Binding var quizItem: QuizItem
     var itemIndex: Int
@@ -44,17 +44,25 @@ struct QuizItemFormView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
 
+                // 丸ボタンを左にしてヒット領域を拡大
                 ForEach($quizItem.choices) { $choice in
-                    HStack {
-                        TextField("選択肢", text: $choice.text)
-                            .textFieldStyle(.roundedBorder)
+                    HStack(spacing: 8) {
                         Button {
                             quizItem.correctAnswerId = choice.id
                         } label: {
                             Image(systemName: choice.id == quizItem.correctAnswerId ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 20, weight: .regular))
                                 .foregroundColor(choice.id == quizItem.correctAnswerId ? .green : .secondary)
+                                .frame(width: 32, height: 32, alignment: .center)
+                                .contentShape(Rectangle())
+                                .accessibilityLabel("この選択肢を正解にする")
                         }
+                        .buttonStyle(.plain)
+
+                        TextField("選択肢", text: $choice.text)
+                            .textFieldStyle(.roundedBorder)
                     }
+                    .padding(.vertical, 2)
                 }
             }
 
@@ -87,9 +95,10 @@ struct CreateQuestionView: View {
     @Environment(\.showAuthenticationSheet) private var showAuthenticationSheet
 
     @State private var title = ""
-    @State private var purpose = "" // 目的を保持する状態変数
+    @State private var purpose = "" // 目的
     @State private var tags = ""
     @State private var remarks = ""
+    @State private var dmInviteMessage = "" // 全問正解者向けメッセージ（任意）
     @State private var quizItems: [QuizItem] = [
         QuizItem(id: UUID().uuidString, questionText: "", choices: [
             Choice(id: UUID().uuidString, text: ""),
@@ -100,7 +109,6 @@ struct CreateQuestionView: View {
     @State private var showAlert = false
     @State private var alertMessage = ""
     
-    // 投稿ボタンを無効化するための計算プロパティ
     private var isPostButtonDisabled: Bool {
         return viewModel.isLoading || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || purpose.isEmpty
     }
@@ -110,17 +118,13 @@ struct CreateQuestionView: View {
             Form {
                 Section(header: Text("質問の基本情報")) {
                     VStack(alignment: .leading) {
-                        Text("題名")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        Text("題名").font(.caption).foregroundColor(.secondary)
                         TextField("掲示板に表示されるタイトル", text: $title)
                             .textFieldStyle(.roundedBorder)
                     }
                     
                     VStack(alignment: .leading) {
-                        Text("目的")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        Text("目的").font(.caption).foregroundColor(.secondary)
                         Picker("目的を選択", selection: $purpose) {
                             Text("選択してください").tag("")
                             ForEach(viewModel.availablePurposes, id: \.self) { p in
@@ -133,22 +137,31 @@ struct CreateQuestionView: View {
                     }
 
                     VStack(alignment: .leading) {
-                        Text("タグ")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        Text("タグ").font(.caption).foregroundColor(.secondary)
                         TextField("例: ご飯,パン,麺（カンマ区切り）", text: $tags)
                             .textFieldStyle(.roundedBorder)
                     }
 
                     VStack(alignment: .leading) {
-                        Text("備考・説明")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        Text("備考・説明").font(.caption).foregroundColor(.secondary)
                         ZStack(alignment: .topLeading) {
-                            TextEditor(text: $remarks)
-                                .frame(height: 100)
+                            TextEditor(text: $remarks).frame(height: 100)
                             if remarks.isEmpty {
-                                Text("任意")
+                                Text("任意").foregroundColor(Color(UIColor.placeholderText))
+                                    .padding(.top, 8).padding(.leading, 5)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color(UIColor.systemGray4), lineWidth: 1))
+                    }
+
+                    // ここが追加の入力欄
+                    VStack(alignment: .leading) {
+                        Text("全問正解者へのメッセージ（任意）").font(.caption).foregroundColor(.secondary)
+                        ZStack(alignment: .topLeading) {
+                            TextEditor(text: $dmInviteMessage).frame(height: 80)
+                            if dmInviteMessage.isEmpty {
+                                Text("例: 全問正解おめでとう！DMください")
                                     .foregroundColor(Color(UIColor.placeholderText))
                                     .padding(.top, 8).padding(.leading, 5)
                                     .allowsHitTesting(false)
@@ -170,29 +183,29 @@ struct CreateQuestionView: View {
                 HStack {
                     if quizItems.count < 5 {
                         Button("問題を追加") { addQuizItem() }
-                        .buttonStyle(.borderless)
+                            .buttonStyle(.borderless)
                     }
                     Spacer()
                 }
 
                 Section {
-                     Button {
-                         if authViewModel.isSignedIn {
-                             postQuestion()
-                         } else {
-                             showAuthenticationSheet.wrappedValue = true
-                         }
-                     } label: {
-                         HStack {
-                             Spacer()
-                             if viewModel.isLoading {
-                                  ProgressView()
-                             } else {
-                                 Text(authViewModel.isSignedIn ? "投稿する" : "ログインして投稿")
-                             }
-                             Spacer()
-                         }
-                     }
+                    Button {
+                        if authViewModel.isSignedIn {
+                            postQuestion()
+                        } else {
+                            showAuthenticationSheet.wrappedValue = true
+                        }
+                    } label: {
+                        HStack {
+                            Spacer()
+                            if viewModel.isLoading {
+                                ProgressView()
+                            } else {
+                                Text(authViewModel.isSignedIn ? "投稿する" : "ログインして投稿")
+                            }
+                            Spacer()
+                        }
+                    }
                     .disabled(isPostButtonDisabled)
                 }
             }
@@ -201,6 +214,9 @@ struct CreateQuestionView: View {
                 Button("OK") { }
             } message: {
                 Text(alertMessage)
+            }
+            .task {
+                viewModel.setAuthViewModel(authViewModel)
             }
         }
     }
@@ -219,78 +235,80 @@ struct CreateQuestionView: View {
     }
 
     private func postQuestion() {
-         guard let authorId = authViewModel.userSub, let idToken = authViewModel.idToken else {
-             alertMessage = "ユーザー情報が見つかりません。再ログインしてください。"
-             showAlert = true
-             return
-         }
-         
-         if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-              alertMessage = "題名を入力してください。"
-              showAlert = true
-              return
-          }
-          
-         if purpose.isEmpty {
-             alertMessage = "目的を選択してください。"
-             showAlert = true
-             return
-         }
-         
-         for (index, item) in quizItems.enumerated() {
-              if item.questionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                  alertMessage = "問題 \(index + 1) の問題文が空です。"
-                  showAlert = true
-                  return
-              }
-              if item.choices.count < 2 {
-                  alertMessage = "問題 \(index + 1) の選択肢は2つ以上必要です。"
-                  showAlert = true
-                  return
-              }
-              if item.correctAnswerId.isEmpty || !item.choices.contains(where: { $0.id == item.correctAnswerId }) {
-                  alertMessage = "問題 \(index + 1) の正解が選択されていません。"
-                  showAlert = true
-                  return
-              }
-              for (choiceIndex, choice) in item.choices.enumerated() {
-                  if choice.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                      alertMessage = "問題 \(index + 1) の選択肢 \(choiceIndex + 1) が空です。"
-                      showAlert = true
-                      return
-                  }
-              }
-          }
+        guard let authorId = authViewModel.userSub else {
+            alertMessage = "ユーザー情報が見つかりません。再ログインしてください。"
+            showAlert = true
+            return
+        }
+        
+        if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            alertMessage = "題名を入力してください。"
+            showAlert = true
+            return
+        }
+        if purpose.isEmpty {
+            alertMessage = "目的を選択してください。"
+            showAlert = true
+            return
+        }
+        for (index, item) in quizItems.enumerated() {
+            if item.questionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                alertMessage = "問題 \(index + 1) の問題文が空です。"
+                showAlert = true
+                return
+            }
+            if item.choices.count < 2 {
+                alertMessage = "問題 \(index + 1) の選択肢は2つ以上必要です。"
+                showAlert = true
+                return
+            }
+            if item.correctAnswerId.isEmpty || !item.choices.contains(where: { $0.id == item.correctAnswerId }) {
+                alertMessage = "問題 \(index + 1) の正解が選択されていません。"
+                showAlert = true
+                return
+            }
+            for (choiceIndex, choice) in item.choices.enumerated() {
+                if choice.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    alertMessage = "問題 \(index + 1) の選択肢 \(choiceIndex + 1) が空です。"
+                    showAlert = true
+                    return
+                }
+            }
+        }
 
-         let tagsArray = tags.split(separator: ",")
-                           .map { String($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                           .filter { !$0.isEmpty }
+        let tagsArray = tags.split(separator: ",")
+                          .map { String($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                          .filter { !$0.isEmpty }
 
-         Task {
-             let success = await viewModel.createQuestion(
-                 title: title.trimmingCharacters(in: .whitespacesAndNewlines),
-                 tags: tagsArray,
-                 remarks: remarks.trimmingCharacters(in: .whitespacesAndNewlines),
-                 authorId: authorId,
-                 quizItems: quizItems,
-                 idToken: idToken,
-                 purpose: purpose
-             )
+        Task {
+            let success = await viewModel.createQuestion(
+                title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+                tags: tagsArray,
+                remarks: remarks.trimmingCharacters(in: .whitespacesAndNewlines),
+                authorId: authorId,
+                quizItems: quizItems,
+                purpose: purpose,
+                dmInviteMessage: dmInviteMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : dmInviteMessage
+            )
 
-             if success {
-                 alertMessage = "質問を投稿しました！"
-                 // フォームをリセット
-                 title = ""
-                 purpose = ""
-                 tags = ""
-                 remarks = ""
-                 quizItems = [QuizItem(id: UUID().uuidString, questionText: "", choices: [Choice(id: UUID().uuidString, text: ""), Choice(id: UUID().uuidString, text: "")], correctAnswerId: "")]
-             } else {
-                 alertMessage = "投稿に失敗しました。しばらくしてからもう一度お試しください。"
-             }
-             showAlert = true
-         }
+            if success {
+                alertMessage = "質問を投稿しました！"
+                // フォームをリセット
+                title = ""
+                purpose = ""
+                tags = ""
+                remarks = ""
+                dmInviteMessage = ""
+                quizItems = [QuizItem(
+                    id: UUID().uuidString,
+                    questionText: "",
+                    choices: [Choice(id: UUID().uuidString, text: ""), Choice(id: UUID().uuidString, text: "")],
+                    correctAnswerId: ""
+                )]
+            } else {
+                alertMessage = "投稿に失敗しました。しばらくしてからもう一度お試しください。"
+            }
+            showAlert = true
+        }
     }
 }
-
-

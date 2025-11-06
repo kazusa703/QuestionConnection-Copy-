@@ -10,41 +10,44 @@ struct DMListRowView: View {
     
     @EnvironmentObject private var authViewModel: AuthViewModel
 
-    // --- ★★★ ここから修正 ★★★ ---
-    
-    // State（状態）を削除し、Computed Property（計算プロパティ）に変更
+    // 相手のニックネーム（キャッシュから取得）
     private var opponentNickname: String {
         guard let myUserId = authViewModel.userSub else { return "認証エラー" }
-        
         // 相手のIDを特定
         guard let opponentId = thread.participants.first(where: { $0 != myUserId }) else {
             return "不明なユーザー"
         }
-        
-        // ニックネームVMのキャッシュを直接参照
-        if let nickname = profileViewModel.userNicknames[opponentId] {
-            // キャッシュに存在する（取得済み）
-            return nickname.isEmpty ? "（未設定）" : nickname
-        } else {
-            // まだキャッシュにない（DMListViewが今まさに取得中）
-            return "読み込み中..."
-        }
+        return profileViewModel.userNicknames[opponentId] ?? "不明なユーザー"
+    }
+
+    // 未読インジケーター判定
+    private var isUnread: Bool {
+        guard let myUserId = authViewModel.userSub else { return false }
+        return ThreadReadTracker.shared.isUnread(
+            threadLastUpdated: thread.lastUpdated,
+            userId: myUserId,
+            threadId: thread.threadId
+        )
     }
 
     var body: some View {
-        VStack(alignment: .leading) {
-            // 相手のニックネームを表示（↑のopponentNicknameが使われる）
-            Text("相手: \(opponentNickname)")
-                .font(.headline)
-
-            Text("Q: \(thread.questionTitle)")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                // 「相手: 」の接頭辞を削除してユーザー名のみ表示
+                Text(opponentNickname)
+                    .foregroundColor(.primary)
+                Text("Q: \(thread.questionTitle)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+            if isUnread {
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 10, height: 10)
+                    .accessibilityLabel("未読")
+            }
         }
-        // .task { ... } は削除する
+        .padding(.vertical, 4)
     }
-    
-    // fetchOpponentNickname() 関数も削除する
-    
-    // --- ★★★ ここまで修正 ★★★ ---
 }

@@ -42,8 +42,6 @@ struct ContentView: View {
                 SetNicknameView() // The view for setting nickname
                     .environmentObject(authViewModel) // Pass AuthViewModel
                     .environmentObject(profileViewModel) // Pass ProfileViewModel
-                    // Optional: Allow SetNicknameView to dismiss itself by setting the binding
-                    // .environment(\.dismiss, { showingSetNicknameSheet = false })
             }
             // --- Observe sign-in status changes ---
             .onChange(of: authViewModel.isSignedIn) { _, isSignedIn in
@@ -54,9 +52,13 @@ struct ContentView: View {
                     Task {
                         await checkNicknameAndShowSheetIfNeeded()
                     }
+                    // ★★★ 追加: ログイン時にブックマーク取得をトリガー ★★★
+                    profileViewModel.handleSignIn()
                 } else {
                     // Close nickname sheet on sign-out (just in case)
                     showingSetNicknameSheet = false
+                    // ★★★ 追加: ログアウト時にブックマークをクリア ★★★
+                    profileViewModel.handleSignOut()
                 }
             }
             // --- Make the auth sheet binding available to child views ---
@@ -65,18 +67,21 @@ struct ContentView: View {
             .task {
                  if authViewModel.isSignedIn {
                      await checkNicknameAndShowSheetIfNeeded()
+                     // ★★★ 追加: アプリ起動時(ログイン済みなら)にもブックマーク取得 ★★★
+                     profileViewModel.handleSignIn()
                  }
             }
     }
 
     /// Checks if the current user's nickname is set and shows the SetNicknameView if not.
     private func checkNicknameAndShowSheetIfNeeded() async {
-        guard let userId = authViewModel.userSub, let idToken = authViewModel.idToken else {
+        guard let userId = authViewModel.userSub else {
             return // Need user info
         }
 
         // Fetch the latest nickname from the server (also updates cache)
-        _ = await profileViewModel.fetchNickname(userId: userId, idToken: idToken)
+        // ★★★ 修正: idToken 引数を削除 ★★★ (適用済み)
+        _ = await profileViewModel.fetchNickname(userId: userId)
 
         // Check the cached nickname
         let currentNickname = profileViewModel.userNicknames[userId]
@@ -89,7 +94,7 @@ struct ContentView: View {
 }
 
 
-// MARK: - AuthenticationSheetView (Should be defined here or in its own file)
+// MARK: - AuthenticationSheetView (変更なし)
 
 struct AuthenticationSheetView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
@@ -174,9 +179,7 @@ struct AuthenticationSheetView: View {
                     Button("キャンセル") { showingSheet = false }
                 }
             }
-            // Optional: Add a title if needed inside NavigationStack
-            // .navigationTitle("認証")
-            // .navigationBarTitleDisplayMode(.inline)
         } // End NavigationStack
     } // End body
 } // End struct AuthenticationSheetView
+
