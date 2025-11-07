@@ -568,6 +568,51 @@ class ProfileViewModel: ObservableObject {
     }
     // --- ★★★ ここまで追加 ★★★ ---
 
+    // --- ★★★ ここからアカウント削除用の関数を追加 ★★★ ---
+
+    /// アカウントを削除する
+    /// - Returns: 成功した場合は true, 失敗した場合は false
+    func deleteAccount() async -> Bool {
+        guard let userId = authViewModel.userSub, authViewModel.isSignedIn else {
+            print("ProfileViewModel: 未ログインのためアカウント削除を実行できません。")
+            return false
+        }
+        
+        guard let idToken = await authViewModel.getValidIdToken() else {
+            print("ProfileViewModel: 認証トークン取得失敗")
+            return false
+        }
+
+        // ★★★ API Gatewayで作成したURL ★★★
+        let urlString = "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/users/\(userId)"
+        guard let url = URL(string: urlString) else {
+            print("ProfileViewModel: アカウント削除URLが無効です。")
+            return false
+        }
+        
+        print("アカウント削除APIを呼び出します: \(urlString)")
+
+        do {
+            var request = URLRequest(url: url)
+            request.httpMethod = "DELETE"
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+
+            let (_, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse, (httpResponse.statusCode == 200 || httpResponse.statusCode == 204) else {
+                print("アカウント削除APIエラー: \(response)")
+                return false
+            }
+            
+            print("アカウント削除API成功。")
+            return true
+
+        } catch {
+            print("アカウント削除APIリクエストエラー: \(error)")
+            return false
+        }
+    }
+    // --- ★★★ ここまで追加 ★★★ ---
     
     // (fetchMyQuestions, fetchUserStats, fetchQuestionAnalytics 関数は変更なし)
     func fetchMyQuestions(authorId: String) async {
@@ -646,7 +691,3 @@ class ProfileViewModel: ObservableObject {
         isAnalyticsLoading = false
     }
 }
-
-
-
-
