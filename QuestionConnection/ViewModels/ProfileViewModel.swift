@@ -341,50 +341,60 @@ class ProfileViewModel: ObservableObject {
     // (fetchNickname 関数は変更なし)
     // [共通関数] 指定したuserIdのニックネームを取得する (キャッシュ対応)
     func fetchNickname(userId: String) async -> String {
-        // 1. 既にキャッシュにあればそれを返す
-        if let cachedNickname = userNicknames[userId] {
-            print("ニックネーム(ID: \(userId))をキャッシュから取得: \(cachedNickname)")
-            return cachedNickname.isEmpty ? "（未設定）" : cachedNickname
-        }
-        
-        guard !userId.isEmpty else { return "不明" }
-
-        // ★★★ 関数内で getValidIdToken を呼び出す ★★★
-        guard let idToken = await authViewModel.getValidIdToken() else {
-            print("ニックネーム取得: 認証トークン取得失敗")
-            return "認証エラー"
-        }
-        
-        // 2. キャッシュになければAPIを呼び出す
-        let url = usersApiEndpoint.appendingPathComponent(userId)
-        
-        do {
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.setValue(idToken, forHTTPHeaderField: "Authorization")
-
-            let (data, response) = try await URLSession.shared.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                print("ニックネーム取得時にサーバーエラー(ID: \(userId)): \(response)")
-                return "取得失敗"
+            // 1. 既にキャッシュにあればそれを返す
+            if let cachedNickname = userNicknames[userId] {
+                print("ニックネーム(ID: \(userId))をキャッシュから取得: \(cachedNickname)")
+                return cachedNickname.isEmpty ? "（未設定）" : cachedNickname
             }
             
-            let profile = try JSONDecoder().decode(UserProfile.self, from: data)
-            let fetchedNickname = profile.nickname ?? "" // 未設定なら空文字
-            
-            // 3. 取得した結果をキャッシュに保存
-            userNicknames[userId] = fetchedNickname
-            print("ニックネーム(ID: \(userId))をAPIから取得: \(fetchedNickname)")
-            
-            return fetchedNickname.isEmpty ? "（未設定）" : fetchedNickname // UI表示用に調整
+            guard !userId.isEmpty else { return "不明" }
 
-        } catch {
-            print("ニックネーム取得APIへのリクエスト中にエラー(ID: \(userId)): \(error)")
-            return "エラー"
+            guard let idToken = await authViewModel.getValidIdToken() else {
+                print("ニックネーム取得: 認証トークン取得失敗")
+                return "認証エラー"
+            }
+            
+            let url = usersApiEndpoint.appendingPathComponent(userId)
+            
+            do {
+                var request = URLRequest(url: url)
+                request.httpMethod = "GET"
+                request.setValue(idToken, forHTTPHeaderField: "Authorization")
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+
+                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                    print("ニックネーム取得時にサーバーエラー(ID: \(userId)): \(response)")
+                    // ★ 404 Not Found など、取得失敗時はキャッシュに何も入れずにエラー文字列を返す
+                    // (DMListRowView側はキャッシュがnilのままなので「削除されたユーザー」と表示する)
+                    return "取得失敗"
+                }
+                
+                // ★★★ ここから修正 ★★★
+                // サーバーが200 OKでも、中身がnullや空 {} かもしれない
+                // UserProfile (notifyOnCorrectAnswer を含む) をデコード
+                guard let profile = try? JSONDecoder().decode(UserProfile.self, from: data) else {
+                    // デコードに失敗（データが空 {} または UserProfile 構造体と一致しない）
+                    // ＝ ユーザーは存在するがプロファイルがない（削除された）とみなす
+                    print("ニックネーム取得: 200 OK だがプロファイル内容がデコード不可 (削除ユーザー？) ID: \(userId)")
+                    return "取得失敗" // キャッシュ(nil)のままにする
+                }
+                
+                let fetchedNickname = profile.nickname ?? "" // ニックネームが null なら ""
+                
+                // 3. 取得した結果をキャッシュに保存 (ユーザーは存在する)
+                userNicknames[userId] = fetchedNickname
+                print("ニックネーム(ID: \(userId))をAPIから取得: \(fetchedNickname)")
+                
+                return fetchedNickname.isEmpty ? "（未設定）" : fetchedNickname // UI表示用に調整
+                // ★★★ ここまで修正 ★★★
+
+            } catch {
+                print("ニックネーム取得APIへのリクエスト中にエラー(ID: \(userId)): \(error)")
+                 // ★ catch時もキャッシュに何も入れない
+                return "エラー"
+            }
         }
-    }
-    
     // [ProfileView専用] 自分のプロファイル（ニックネームと設定）を読み込む
     // ★★★ 修正: fetchNicknameを呼び出す代わりに、ここで直接APIを叩き、通知設定も取得する ★★★
     func fetchMyProfile(userId: String) async {
