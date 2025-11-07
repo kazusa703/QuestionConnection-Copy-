@@ -614,6 +614,67 @@ class ProfileViewModel: ObservableObject {
     }
     // --- ★★★ ここまで追加 ★★★ ---
     
+    // --- ★★★ ここから通報用の関数を追加 ★★★ ---
+    
+    /// コンテンツを通報する
+    /// - Parameters:
+    ///   - targetId: 通報対象のID (例: questionId)
+    ///   - targetType: 通報対象の種類 (例: "question")
+    ///   - reason: 通報理由 (例: "inappropriate")
+    ///   - detail: 詳細
+    /// - Returns: 成功した場合は true
+    func reportContent(targetId: String, targetType: String, reason: String, detail: String) async -> Bool {
+        guard authViewModel.isSignedIn else {
+            print("ProfileViewModel: 未ログインのため通報できません。")
+            return false
+        }
+        
+        guard let idToken = await authViewModel.getValidIdToken() else {
+            print("ProfileViewModel: 認証トークン取得失敗 (通報)")
+            return false
+        }
+
+        // ★★★ API Gatewayで作成したURL ★★★
+        let urlString = "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/reports"
+        guard let url = URL(string: urlString) else {
+            print("ProfileViewModel: 通報URLが無効です。")
+            return false
+        }
+        
+        print("通報APIを呼び出します: \(targetType) \(targetId)")
+        
+        let requestBody: [String: String] = [
+            "targetType": targetType,
+            "targetId": targetId,
+            "reason": reason,
+            "detail": detail
+        ]
+
+        do {
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+            request.httpBody = try JSONEncoder().encode(requestBody)
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 201 else {
+                print("通報APIエラー: \(response)")
+                return false
+            }
+            
+            print("通報API成功。Report ID: \(String(data: data, encoding: .utf8) ?? "")")
+            return true
+
+        } catch {
+            print("通報APIリクエストエラー: \(error)")
+            return false
+        }
+    }
+    // --- ★★★ ここまで追加 ★★★ ---
+    
+    
     // (fetchMyQuestions, fetchUserStats, fetchQuestionAnalytics 関数は変更なし)
     func fetchMyQuestions(authorId: String) async {
         guard !authorId.isEmpty else { return }
