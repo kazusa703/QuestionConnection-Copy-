@@ -17,14 +17,13 @@ struct InitialDMView: View {
     @State private var pendingThread: Thread? = nil
     @State private var navigateToThread: Thread? = nil
 
-    // 追加: 表示するトピック文を計算（同じなら非表示）
+    // (topicText の計算ロジック ... 変更なし)
     private var topicText: String? {
         let t = questionTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let nick = recipientNickname.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return nil }
-        if t == nick { return nil } // ニックネームと同じなら非表示
+        if t == nick { return nil }
         return "(\(t) )"
-        // 例: 「Q: \(t)」にしたい場合は上記の返り値を "Q: \(t)" に変更
     }
 
     var body: some View {
@@ -32,7 +31,6 @@ struct InitialDMView: View {
             Text("\(recipientNickname) さんへのメッセージ")
                 .font(.headline)
 
-            // ここで topicText があるときだけ出す
             if let topic = topicText {
                 Text(topic)
                     .font(.subheadline)
@@ -68,11 +66,14 @@ struct InitialDMView: View {
                 .environmentObject(authViewModel)
         }
         .task {
+            // ★★★ 修正: VMにAuthViewModelをセット ★★★
+            // (DMViewModel.swift が v5 (ブロック確認機能付き) に更新されている前提)
             viewModel.setAuthViewModel(authViewModel)
             self.recipientNickname = await profileViewModel.fetchNickname(userId: recipientId)
         }
     }
 
+    // --- ★★★ sendDM 関数を修正 (アラートメッセージ) ★★★ ---
     private func sendDM() {
         guard let senderId = authViewModel.userSub else {
             alertTitle = "エラー"
@@ -84,21 +85,26 @@ struct InitialDMView: View {
         guard !text.isEmpty else { return }
 
         Task {
+            // v5 の DMViewModel は、ブロックされている場合 nil を返す
             let thread = await viewModel.sendInitialDMAndReturnThread(
                 recipientId: recipientId,
                 senderId: senderId,
                 questionTitle: questionTitle,
                 messageText: text
             )
+            
             if let thread {
+                // --- 成功 ---
                 let seenAt = Date().addingTimeInterval(1)
                 ThreadReadTracker.shared.markSeen(userId: senderId, threadId: thread.threadId, date: seenAt)
                 self.pendingThread = thread
                 alertTitle = "送信完了"
                 alertMessage = "メッセージを送信しました。OKで会話に移動します。"
             } else {
-                alertTitle = "エラー"
-                alertMessage = "メッセージの送信に失敗しました。"
+                // --- 失敗 ---
+                alertTitle = "送信エラー"
+                // ★ 失敗理由に「ブロック」の可能性を明記
+                alertMessage = "メッセージの送信に失敗しました。\n相手からブロックされているか、ネットワークに問題がある可能性があります。"
             }
             showAlert = true
         }

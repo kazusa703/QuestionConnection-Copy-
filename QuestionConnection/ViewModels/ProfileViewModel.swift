@@ -2,7 +2,7 @@ import Foundation
 import Combine
 // API呼び出し自体はURLSessionを使うため、AWSClientRuntime は不要です
 
-// (UserStats, QuestionAnalyticsResult 構造体は変更なし)
+// (UserStats, QuestionAnalyticsResult, UserProfile, BookmarkResponse 構造体は変更なし)
 struct UserStats: Codable {
     let totalAnswers: Int
     let correctAnswers: Int
@@ -13,25 +13,24 @@ struct QuestionAnalyticsResult: Codable {
     let correctAnswers: Int
     let accuracy: Double
 }
-
-// ★★★ 修正: UserProfile に通知設定 (notifyOnCorrectAnswer) を追加 ★★★
-// ※バックエンドの getUserProfileFunction もこの値を返すように修正が必要です
 struct UserProfile: Codable {
     let nickname: String?
     let notifyOnCorrectAnswer: Bool? // 通知設定
 }
-
-// ★★★ 追加: ブックマーク取得APIのレスポンス用構造体 ★★★
-// APIが {"bookmarks": ["id1", "id2"]} という形式のJSONを返すことを想定
 struct BookmarkResponse: Decodable {
     let bookmarks: [String] // もしキー名が違うならここを修正
+}
+
+// ★★★ 追加: ブロックリスト取得APIのレスポンス用構造体 ★★★
+struct BlocklistResponse: Decodable {
+    let blockedUserIds: [String]
 }
 
 
 @MainActor
 class ProfileViewModel: ObservableObject {
 
-    // (myQuestions, userStats, ... analyticsError までのプロパティは変更なし)
+    // (myQuestions ... deletionError までのプロパティは変更なし)
     @Published var myQuestions: [Question] = []
     @Published var userStats: UserStats?
     @Published var isLoadingMyQuestions = false
@@ -39,28 +38,25 @@ class ProfileViewModel: ObservableObject {
     @Published var analyticsResult: QuestionAnalyticsResult?
     @Published var isAnalyticsLoading = false
     @Published var analyticsError: String?
-    
-    // (nickname, isNicknameLoading, ... showNicknameAlert までのプロパティは変更なし)
     @Published var nickname: String = ""
     @Published var isNicknameLoading = false
     @Published var nicknameAlertMessage: String?
     @Published var showNicknameAlert = false
-    
-    // キャッシュ
     @Published var userNicknames: [String: String] = [:]
-    
-    // ★★★ ブックマーク関連のプロパティ (変更なし) ★★★
     @Published var bookmarkedQuestionIds: Set<String> = []
-    @Published var isLoadingBookmarks = false // ブックマーク取得中の状態
-
-    // ★★★ 質問削除用の状態 (変更なし) ★★★
+    @Published var isLoadingBookmarks = false
     @Published var isDeletingQuestion = false
     @Published var deletionError: String?
+    
+    // (notifyOnCorrectAnswer, isLoadingSettings は変更なし)
+    @Published var notifyOnCorrectAnswer: Bool = false
+    @Published var isLoadingSettings: Bool = false
 
-    // --- ★★★ ここから通知設定用のプロパティを追加 ★★★ ---
-    @Published var notifyOnCorrectAnswer: Bool = false // SettingsViewのトグルがバインドする先
-    @Published var isLoadingSettings: Bool = false // 設定読み込み/更新中のローディング表示用
+    // --- ★★★ ここからブロック関連のプロパティを追加 ★★★ ---
+    @Published var blockedUserIds: Set<String> = []
+    @Published var isLoadingBlocklist = false
     // --- ★★★ ここまで追加 ★★★ ---
+
 
     // (apiEndpoint の定義は変更なし)
     private let usersApiEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/users")!
@@ -69,22 +65,20 @@ class ProfileViewModel: ObservableObject {
     // AuthViewModelを保持 (変更なし)
     private let authViewModel: AuthViewModel
 
-    // initでAuthViewModelを受け取る (変更なし)
+    // initでAuthViewModelを受け取る (★修正★)
     init(authViewModel: AuthViewModel) {
         self.authViewModel = authViewModel
         Task {
-            // ★★★ 修正: ログイン状態を確認してから取得 ★★★
             if authViewModel.isSignedIn {
+                // ★★★ ブックマークとブロックリスト取得を追加 ★★★
                 await fetchBookmarks()
+                await fetchBlocklist() // ★追加
             }
         }
     }
 
-    
-    // (deleteQuestion 関数は変更なし)
-    /// 質問を削除する (バックエンドAPI呼び出し)
-    /// - Parameter questionId: 削除する質問のID
-    /// - Returns: 削除に成功した場合は true, 失敗した場合は false
+    // (deleteQuestion, fetchBookmarks, addBookmark, removeBookmark, isBookmarked 関数は変更なし)
+    // ... (省略) ...
     func deleteQuestion(questionId: String) async -> Bool {
         guard authViewModel.isSignedIn, !isDeletingQuestion else { return false }
 
@@ -92,8 +86,6 @@ class ProfileViewModel: ObservableObject {
         deletionError = nil
         print("質問削除開始: \(questionId)")
 
-        // ★★★ 修正: 実際のAPI呼び出し (DELETE /questions/{questionId}) ★★★
-        // questionsApiEndpoint を使用
         let url = questionsApiEndpoint.appendingPathComponent(questionId)
 
         do {
@@ -110,19 +102,15 @@ class ProfileViewModel: ObservableObject {
 
             let (_, response) = try await URLSession.shared.data(for: request)
 
-            // 成功時は 204 No Content または 200 OK を想定
             guard let httpResponse = response as? HTTPURLResponse, (httpResponse.statusCode == 204 || httpResponse.statusCode == 200) else {
                 print("質問削除APIエラー: \(response)")
-                // TODO: レスポンスボディから詳細なエラーメッセージを取得する
                 deletionError = "質問の削除に失敗しました (サーバーエラー)。"
                 isDeletingQuestion = false
                 return false
             }
 
             print("質問削除API成功: \(questionId)")
-            // ★★★ 追加: 成功したらローカルのリストからも削除 ★★★
-            // id は Question 構造体のプロパティ名に合わせてください (questionId かもしれません)
-            myQuestions.removeAll { $0.questionId == questionId } // $0.id or $0.questionId
+            myQuestions.removeAll { $0.questionId == questionId }
             
             isDeletingQuestion = false
             return true
@@ -135,15 +123,12 @@ class ProfileViewModel: ObservableObject {
         }
     }
 
-    // (fetchBookmarks, addBookmark, removeBookmark 関数は変更なし)
-    /// ユーザーのブックマークIDリストを取得する (API実装)
     func fetchBookmarks() async {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn, !isLoadingBookmarks else { return }
 
         isLoadingBookmarks = true
         print("ブックマークリストの取得開始...")
 
-        // GET /users/{userId}/bookmarks
         let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("bookmarks")
 
         do {
@@ -154,7 +139,7 @@ class ProfileViewModel: ObservableObject {
             }
 
             var request = URLRequest(url: url)
-            request.httpMethod = "GET" // GETメソッド
+            request.httpMethod = "GET"
             request.setValue(idToken, forHTTPHeaderField: "Authorization")
 
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -165,7 +150,6 @@ class ProfileViewModel: ObservableObject {
                 return
             }
 
-            // ★★★ 修正: APIが返す形式に合わせてデコード (例: {"bookmarks": ["id1", "id2"]} の場合) ★★★
             let responseData = try JSONDecoder().decode(BookmarkResponse.self, from: data)
             self.bookmarkedQuestionIds = Set(responseData.bookmarks)
             print("ブックマークリスト取得完了。件数: \(bookmarkedQuestionIds.count)")
@@ -177,11 +161,9 @@ class ProfileViewModel: ObservableObject {
         isLoadingBookmarks = false
     }
 
-    /// 質問をブックマークに追加する (API実装)
     func addBookmark(questionId: String) async {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return }
 
-        // ローカルの状態を先に更新
         let (wasInserted, _) = bookmarkedQuestionIds.insert(questionId)
         guard wasInserted else {
              print("ブックマーク追加: 既にローカルに存在 \(questionId)")
@@ -189,15 +171,12 @@ class ProfileViewModel: ObservableObject {
         }
         print("ブックマーク追加 (ローカル): \(questionId)")
 
-        // ★★★ 修正: 実際のAPI呼び出し ★★★
-        // POST /users/{userId}/bookmarks
         let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("bookmarks")
 
         do {
             guard let idToken = await authViewModel.getValidIdToken() else {
                 print("ブックマーク追加: 認証トークン取得失敗")
-                bookmarkedQuestionIds.remove(questionId) // ローカルの変更を戻す
-                // TODO: ユーザーにエラーを通知
+                bookmarkedQuestionIds.remove(questionId)
                 return
             }
 
@@ -212,24 +191,20 @@ class ProfileViewModel: ObservableObject {
 
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 201 else {
                 print("ブックマーク追加APIエラー: \(response)")
-                bookmarkedQuestionIds.remove(questionId) // ローカルの変更を戻す
-                // TODO: ユーザーにエラーを通知
+                bookmarkedQuestionIds.remove(questionId)
                 return
             }
             print("ブックマーク追加API成功: \(questionId)")
 
         } catch {
             print("ブックマーク追加APIリクエストエラー: \(error)")
-            bookmarkedQuestionIds.remove(questionId) // ローカルの変更を戻す
-            // TODO: ユーザーにエラーを通知
+            bookmarkedQuestionIds.remove(questionId)
         }
     }
 
-    /// 質問をブックマークから削除する (API実装)
     func removeBookmark(questionId: String) async {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return }
 
-        // ローカルの状態を先に更新
         guard bookmarkedQuestionIds.contains(questionId) else {
              print("ブックマーク削除: ローカルに存在しない \(questionId)")
              return
@@ -237,15 +212,12 @@ class ProfileViewModel: ObservableObject {
         bookmarkedQuestionIds.remove(questionId)
         print("ブックマーク削除 (ローカル): \(questionId)")
 
-        // ★★★ 修正: 実際のAPI呼び出し ★★★
-        // DELETE /users/{userId}/bookmarks/{questionId}
         let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("bookmarks").appendingPathComponent(questionId)
 
         do {
             guard let idToken = await authViewModel.getValidIdToken() else {
                 print("ブックマーク削除: 認証トークン取得失敗")
-                bookmarkedQuestionIds.insert(questionId) // ローカルの変更を戻す
-                // TODO: ユーザーにエラーを通知
+                bookmarkedQuestionIds.insert(questionId)
                 return
             }
 
@@ -257,54 +229,50 @@ class ProfileViewModel: ObservableObject {
 
             guard let httpResponse = response as? HTTPURLResponse, (httpResponse.statusCode == 204 || httpResponse.statusCode == 200) else {
                 print("ブックマーク削除APIエラー: \(response)")
-                bookmarkedQuestionIds.insert(questionId) // ローカルの変更を戻す
-                // TODO: ユーザーにエラーを通知
+                bookmarkedQuestionIds.insert(questionId)
                 return
             }
             print("ブックマーク削除API成功: \(questionId)")
 
         } catch {
             print("ブックマーク削除APIリクエストエラー: \(error)")
-            bookmarkedQuestionIds.insert(questionId) // ローカルの変更を戻す
-            // TODO: ユーザーにエラーを通知
+            bookmarkedQuestionIds.insert(questionId)
         }
     }
 
-    // (isBookmarked 関数は変更なし)
-    /// 指定した質問IDがブックマークされているか確認する (変更なし)
     func isBookmarked(questionId: String) -> Bool {
         return bookmarkedQuestionIds.contains(questionId)
     }
 
-    // (handleSignIn, handleSignOut 関数は変更なし)
-    /// ログイン時にブックマークを取得する
+    // (handleSignIn, handleSignOut 関数を ★修正★)
+    /// ログイン時に各種データを取得する
     func handleSignIn() {
         Task {
             await fetchBookmarks()
+            await fetchBlocklist() // ★追加
         }
     }
-    /// ログアウト時にブックマークをクリアする
+    /// ログアウト時にローカルデータをクリアする
     func handleSignOut() {
         bookmarkedQuestionIds = []
-        print("ローカルのブックマークをクリアしました。") // ログアウト確認用
+        blockedUserIds = [] // ★追加
+        userNicknames = [:] // ★ニックネームキャッシュもクリア
+        myQuestions = [] // ★追加
+        userStats = nil // ★追加
+        print("ローカルのブックマーク、ブロックリスト、キャッシュ等をクリアしました。")
     }
 
 
-    // --- ★★★ ここからデバイストークン登録用の関数を追加 ★★★ ---
-    
-    /// 取得したデバイストークンをサーバーに登録する
-    /// - Parameter deviceTokenString: iOSから取得した生のデバイストークン文字列
+    // (registerDeviceToken, fetchNickname, fetchMyProfile, updateNickname 関数は変更なし)
+    // ... (省略) ...
     func registerDeviceToken(deviceTokenString: String) async {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else {
             print("デバイストークン登録: 未ログインのためスキップ")
             return
         }
         
-        // TODO: 現在保存されているトークンと変更がないかチェックし、同じならAPI呼び出しをスキップするロジック (任意)
-        
         print("デバイストークンをサーバーに登録開始...")
 
-        // POST /users/{userId}/deviceToken
         let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("deviceToken")
 
         do {
@@ -318,7 +286,6 @@ class ProfileViewModel: ObservableObject {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue(idToken, forHTTPHeaderField: "Authorization")
             
-            // Lambda (registerDeviceTokenFunction) が期待するボディ
             let requestBody = ["deviceToken": deviceTokenString]
             request.httpBody = try JSONEncoder().encode(requestBody)
 
@@ -335,72 +302,66 @@ class ProfileViewModel: ObservableObject {
             print("デバイストークン登録APIリクエストエラー: \(error)")
         }
     }
-    // --- ★★★ ここまで追加 ★★★ ---
-
-
-    // (fetchNickname 関数は変更なし)
-    // [共通関数] 指定したuserIdのニックネームを取得する (キャッシュ対応)
+    
     func fetchNickname(userId: String) async -> String {
-            // 1. 既にキャッシュにあればそれを返す
-            if let cachedNickname = userNicknames[userId] {
-                print("ニックネーム(ID: \(userId))をキャッシュから取得: \(cachedNickname)")
-                return cachedNickname.isEmpty ? "（未設定）" : cachedNickname
-            }
-            
-            guard !userId.isEmpty else { return "不明" }
-
-            guard let idToken = await authViewModel.getValidIdToken() else {
-                print("ニックネーム取得: 認証トークン取得失敗")
-                return "認証エラー"
-            }
-            
-            let url = usersApiEndpoint.appendingPathComponent(userId)
-            
-            do {
-                var request = URLRequest(url: url)
-                request.httpMethod = "GET"
-                request.setValue(idToken, forHTTPHeaderField: "Authorization")
-
-                let (data, response) = try await URLSession.shared.data(for: request)
-
-                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                    print("ニックネーム取得時にサーバーエラー(ID: \(userId)): \(response)")
-                    // ★ 404 Not Found など、取得失敗時はキャッシュに何も入れずにエラー文字列を返す
-                    // (DMListRowView側はキャッシュがnilのままなので「削除されたユーザー」と表示する)
-                    return "取得失敗"
-                }
-                
-                // ★★★ ここから修正 ★★★
-                // サーバーが200 OKでも、中身がnullや空 {} かもしれない
-                // UserProfile (notifyOnCorrectAnswer を含む) をデコード
-                guard let profile = try? JSONDecoder().decode(UserProfile.self, from: data) else {
-                    // デコードに失敗（データが空 {} または UserProfile 構造体と一致しない）
-                    // ＝ ユーザーは存在するがプロファイルがない（削除された）とみなす
-                    print("ニックネーム取得: 200 OK だがプロファイル内容がデコード不可 (削除ユーザー？) ID: \(userId)")
-                    return "取得失敗" // キャッシュ(nil)のままにする
-                }
-                
-                let fetchedNickname = profile.nickname ?? "" // ニックネームが null なら ""
-                
-                // 3. 取得した結果をキャッシュに保存 (ユーザーは存在する)
-                userNicknames[userId] = fetchedNickname
-                print("ニックネーム(ID: \(userId))をAPIから取得: \(fetchedNickname)")
-                
-                return fetchedNickname.isEmpty ? "（未設定）" : fetchedNickname // UI表示用に調整
-                // ★★★ ここまで修正 ★★★
-
-            } catch {
-                print("ニックネーム取得APIへのリクエスト中にエラー(ID: \(userId)): \(error)")
-                 // ★ catch時もキャッシュに何も入れない
-                return "エラー"
-            }
+        if let cachedNickname = userNicknames[userId] {
+            print("ニックネーム(ID: \(userId))をキャッシュから取得: \(cachedNickname)")
+            return cachedNickname.isEmpty ? "（未設定）" : cachedNickname
         }
-    // [ProfileView専用] 自分のプロファイル（ニックネームと設定）を読み込む
-    // ★★★ 修正: fetchNicknameを呼び出す代わりに、ここで直接APIを叩き、通知設定も取得する ★★★
+        
+        guard !userId.isEmpty else { return "不明" }
+
+        guard let idToken = await authViewModel.getValidIdToken() else {
+            print("ニックネーム取得: 認証トークン取得失敗")
+            return "認証エラー"
+        }
+        
+        let url = usersApiEndpoint.appendingPathComponent(userId)
+        
+        do {
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                print("ニックネーム取得時にサーバーエラー(ID: \(userId)): \(response)")
+                // ★ 404 Not Found など、取得失敗時はキャッシュに何も入れずにエラー文字列を返す
+                // (DMListRowView側はキャッシュがnilのままなので「削除されたユーザー」と表示する)
+                return "取得失敗"
+            }
+            
+            // ★★★ ここから修正 ★★★
+            // サーバーが200 OKでも、中身がnullや空 {} かもしれない
+            // UserProfile (notifyOnCorrectAnswer を含む) をデコード
+            guard let profile = try? JSONDecoder().decode(UserProfile.self, from: data) else {
+                // デコードに失敗（データが空 {} または UserProfile 構造体と一致しない）
+                // ＝ ユーザーは存在するがプロファイルがない（削除された）とみなす
+                print("ニックネーム取得: 200 OK だがプロファイル内容がデコード不可 (削除ユーザー？) ID: \(userId)")
+                return "取得失敗" // キャッシュ(nil)のままにする
+            }
+            
+            let fetchedNickname = profile.nickname ?? "" // ニックネームが null なら ""
+            
+            // 3. 取得した結果をキャッシュに保存 (ユーザーは存在する)
+            userNicknames[userId] = fetchedNickname
+            print("ニックネーム(ID: \(userId))をAPIから取得: \(fetchedNickname)")
+            
+            return fetchedNickname.isEmpty ? "（未設定）" : fetchedNickname // UI表示用に調整
+            // ★★★ ここまで修正 ★★★
+
+        } catch {
+            print("ニックネーム取得APIへのリクエスト中にエラー(ID: \(userId)): \(error)")
+             // ★ catch時もキャッシュに何も入れない
+            return "エラー"
+        }
+    }
+    
     func fetchMyProfile(userId: String) async {
         guard !userId.isEmpty else { return }
         
-        isLoadingSettings = true // ニックネームと設定を両方ロード
+        isLoadingSettings = true
         
         guard let idToken = await authViewModel.getValidIdToken() else {
             print("プロファイル取得: 認証トークン取得失敗")
@@ -408,7 +369,7 @@ class ProfileViewModel: ObservableObject {
             return
         }
 
-        let url = usersApiEndpoint.appendingPathComponent(userId) // GET /users/{userId}
+        let url = usersApiEndpoint.appendingPathComponent(userId)
         
         do {
             var request = URLRequest(url: url)
@@ -423,15 +384,11 @@ class ProfileViewModel: ObservableObject {
                 return
             }
             
-            // UserProfile (notifyOnCorrectAnswer を含む) をデコード
             let profile = try JSONDecoder().decode(UserProfile.self, from: data)
             
-            // ニックネームを更新
             self.nickname = profile.nickname ?? ""
-            // ★★★ 通知設定を更新 (デフォルトはfalse) ★★★
             self.notifyOnCorrectAnswer = profile.notifyOnCorrectAnswer ?? false
             
-            // キャッシュも更新
             userNicknames[userId] = profile.nickname ?? ""
 
         } catch {
@@ -440,12 +397,9 @@ class ProfileViewModel: ObservableObject {
         isLoadingSettings = false
     }
 
-    // (updateNickname 関数は変更なし)
-    // ニックネームを更新する関数
     func updateNickname(userId: String) async {
         guard !userId.isEmpty else { return }
         
-        // ★★★ 関数内で getValidIdToken を呼び出す ★★★
         guard let idToken = await authViewModel.getValidIdToken() else {
             print("ニックネーム更新: 認証トークン取得失敗")
             nicknameAlertMessage = "認証情報がありません。再ログインしてください。"
@@ -481,7 +435,6 @@ class ProfileViewModel: ObservableObject {
             print("ニックネームの更新に成功しました！")
             nicknameAlertMessage = "ニックネームを保存しました。"
             showNicknameAlert = true
-            // 更新成功したらキャッシュも更新
             userNicknames[userId] = nicknameToSave
 
         } catch {
@@ -492,12 +445,11 @@ class ProfileViewModel: ObservableObject {
         isNicknameLoading = false
     }
     
-    // --- ★★★ ここから通知設定用の関数を追加 ★★★ ---
-
-    /// [SettingsView専用] 自分の現在の通知設定を読み込む (fetchMyProfileが既に読み込んでいる場合は不要だが、SettingsView用に分離)
+    // (fetchNotificationSettings, updateNotificationSetting 関数は変更なし)
+    // ... (省略) ...
     func fetchNotificationSettings() async {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return }
-        guard !isLoadingSettings else { return } // 既に読み込み中ならスキップ
+        guard !isLoadingSettings else { return }
 
         isLoadingSettings = true
         
@@ -507,7 +459,7 @@ class ProfileViewModel: ObservableObject {
             return
         }
 
-        let url = usersApiEndpoint.appendingPathComponent(userId) // GET /users/{userId}
+        let url = usersApiEndpoint.appendingPathComponent(userId)
         
         do {
             var request = URLRequest(url: url)
@@ -521,7 +473,7 @@ class ProfileViewModel: ObservableObject {
             }
             
             let profile = try JSONDecoder().decode(UserProfile.self, from: data)
-            self.notifyOnCorrectAnswer = profile.notifyOnCorrectAnswer ?? false // デフォルトはOFF
+            self.notifyOnCorrectAnswer = profile.notifyOnCorrectAnswer ?? false
 
         } catch {
             print("通知設定取得APIへのリクエスト中にエラー(ID: \(userId)): \(error)")
@@ -529,15 +481,13 @@ class ProfileViewModel: ObservableObject {
         isLoadingSettings = false
     }
 
-    /// 通知設定を更新する (PUT /users/{userId}/settings)
     func updateNotificationSetting(isOn: Bool) async {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return }
-        guard !isLoadingSettings else { return } // 二重送信防止
+        guard !isLoadingSettings else { return }
 
         isLoadingSettings = true
         print("通知設定を更新: \(isOn)")
 
-        // PUT /users/{userId}/settings
         let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("settings")
 
         do {
@@ -559,29 +509,23 @@ class ProfileViewModel: ObservableObject {
 
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                 print("通知設定更新APIエラー: \(response)")
-                // ★★★ エラー時はUI（トグルスイッチ）を元の状態に戻す ★★★
                 self.notifyOnCorrectAnswer = !isOn
                 isLoadingSettings = false
                 return
             }
             
             print("通知設定の更新に成功しました。")
-            // 成功時はローカルの状態 (self.notifyOnCorrectAnswer) は既にUIと一致しているので変更不要
             isLoadingSettings = false
 
         } catch {
             print("通知設定更新APIリクエストエラー: \(error)")
-            // ★★★ エラー時はUI（トグルスイッチ）を元の状態に戻す ★★★
             self.notifyOnCorrectAnswer = !isOn
             isLoadingSettings = false
         }
     }
-    // --- ★★★ ここまで追加 ★★★ ---
-
-    // --- ★★★ ここからアカウント削除用の関数を追加 ★★★ ---
-
-    /// アカウントを削除する
-    /// - Returns: 成功した場合は true, 失敗した場合は false
+    
+    // (deleteAccount 関数は変更なし)
+    // ... (省略) ...
     func deleteAccount() async -> Bool {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else {
             print("ProfileViewModel: 未ログインのためアカウント削除を実行できません。")
@@ -593,7 +537,6 @@ class ProfileViewModel: ObservableObject {
             return false
         }
 
-        // ★★★ API Gatewayで作成したURL ★★★
         let urlString = "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/users/\(userId)"
         guard let url = URL(string: urlString) else {
             print("ProfileViewModel: アカウント削除URLが無効です。")
@@ -622,17 +565,10 @@ class ProfileViewModel: ObservableObject {
             return false
         }
     }
-    // --- ★★★ ここまで追加 ★★★ ---
-    
-    // --- ★★★ ここから通報用の関数を追加 ★★★ ---
-    
+
+    // --- ★★★ ここから通報・ブロック機能の関数を追加 ★★★ ---
+
     /// コンテンツを通報する
-    /// - Parameters:
-    ///   - targetId: 通報対象のID (例: questionId)
-    ///   - targetType: 通報対象の種類 (例: "question")
-    ///   - reason: 通報理由 (例: "inappropriate")
-    ///   - detail: 詳細
-    /// - Returns: 成功した場合は true
     func reportContent(targetId: String, targetType: String, reason: String, detail: String) async -> Bool {
         guard authViewModel.isSignedIn else {
             print("ProfileViewModel: 未ログインのため通報できません。")
@@ -644,7 +580,6 @@ class ProfileViewModel: ObservableObject {
             return false
         }
 
-        // ★★★ API Gatewayで作成したURL ★★★
         let urlString = "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/reports"
         guard let url = URL(string: urlString) else {
             print("ProfileViewModel: 通報URLが無効です。")
@@ -682,10 +617,147 @@ class ProfileViewModel: ObservableObject {
             return false
         }
     }
+    
+    /// 自分がブロックしているユーザーのIDリストを取得する
+    func fetchBlocklist() async {
+        guard let userId = authViewModel.userSub, authViewModel.isSignedIn, !isLoadingBlocklist else { return }
+
+        isLoadingBlocklist = true
+        print("ブロックリストの取得開始...")
+
+        // GET /users/me/blocklist
+        let url = usersApiEndpoint.appendingPathComponent("me").appendingPathComponent("blocklist")
+
+        do {
+            guard let idToken = await authViewModel.getValidIdToken() else {
+                print("ブロックリスト取得: 認証トークン取得失敗")
+                isLoadingBlocklist = false
+                return
+            }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                            print("ブロックリスト取得APIエラー: 不正なレスポンス (HTTPURLResponseではありません)")
+                            isLoadingBlocklist = false
+                            return
+                        }
+                        
+                        guard httpResponse.statusCode == 200 else {
+                            let responseBody = String(data: data, encoding: .utf8) ?? "(ボディなし)"
+                            print("ブロックリスト取得APIエラー: Status \(httpResponse.statusCode). Body: \(responseBody)")
+                            isLoadingBlocklist = false
+                            return
+                        }
+
+            let responseData = try JSONDecoder().decode(BlocklistResponse.self, from: data)
+            self.blockedUserIds = Set(responseData.blockedUserIds)
+            print("ブロックリスト取得完了。件数: \(blockedUserIds.count)")
+
+        } catch {
+            print("ブロックリスト取得APIリクエストエラー: \(error)")
+        }
+        isLoadingBlocklist = false
+    }
+
+    /// ユーザーをブロックする
+    func addBlock(blockedUserId: String) async -> Bool {
+        guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return false }
+        
+        let (wasInserted, _) = blockedUserIds.insert(blockedUserId)
+        guard wasInserted else {
+             print("ブロック追加: 既にローカルに存在 \(blockedUserId)")
+             return true
+        }
+        print("ブロック追加 (ローカル): \(blockedUserId)")
+
+        // POST /users/me/block
+        let url = usersApiEndpoint.appendingPathComponent("me").appendingPathComponent("block")
+
+        do {
+            guard let idToken = await authViewModel.getValidIdToken() else {
+                print("ブロック追加: 認証トークン取得失敗")
+                blockedUserIds.remove(blockedUserId)
+                return false
+            }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+            let requestBody = ["blockedUserId": blockedUserId]
+            request.httpBody = try JSONEncoder().encode(requestBody)
+
+            let (_, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 201 else {
+                print("ブロック追加APIエラー: \(response)")
+                blockedUserIds.remove(blockedUserId)
+                return false
+            }
+            print("ブロック追加API成功: \(blockedUserId)")
+            return true
+        } catch {
+            print("ブロック追加APIリクエストエラー: \(error)")
+            blockedUserIds.remove(blockedUserId)
+            return false
+        }
+    }
+
+    /// ユーザーのブロックを解除する
+    func removeBlock(blockedUserId: String) async -> Bool {
+        guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return false }
+
+        guard blockedUserIds.contains(blockedUserId) else {
+             print("ブロック解除: ローカルに存在しない \(blockedUserId)")
+             return true
+        }
+        blockedUserIds.remove(blockedUserId)
+        print("ブロック解除 (ローカル): \(blockedUserId)")
+
+        // DELETE /users/me/block/{blockedUserId}
+        let url = usersApiEndpoint.appendingPathComponent("me").appendingPathComponent("block").appendingPathComponent(blockedUserId)
+
+        do {
+            guard let idToken = await authViewModel.getValidIdToken() else {
+                print("ブロック解除: 認証トークン取得失敗")
+                blockedUserIds.insert(blockedUserId)
+                return false
+            }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "DELETE"
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+
+            let (_, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse, (httpResponse.statusCode == 204 || httpResponse.statusCode == 200) else {
+                print("ブロック解除APIエラー: \(response)")
+                blockedUserIds.insert(blockedUserId)
+                return false
+            }
+            print("ブロック解除API成功: \(blockedUserId)")
+            return true
+        } catch {
+            print("ブロック解除APIリクエストエラー: \(error)")
+            blockedUserIds.insert(blockedUserId)
+            return false
+        }
+    }
+
+    /// 指定したユーザーIDがブロックされているか確認する
+    func isBlocked(userId: String) -> Bool {
+        return blockedUserIds.contains(userId)
+    }
     // --- ★★★ ここまで追加 ★★★ ---
     
     
     // (fetchMyQuestions, fetchUserStats, fetchQuestionAnalytics 関数は変更なし)
+    // ... (省略) ...
     func fetchMyQuestions(authorId: String) async {
         guard !authorId.isEmpty else { return }
         isLoadingMyQuestions = true
@@ -731,7 +803,6 @@ class ProfileViewModel: ObservableObject {
     func fetchQuestionAnalytics(questionId: String) async {
         guard !questionId.isEmpty else { return }
         
-        // ★★★ 関数内で getValidIdToken を呼び出す ★★★
         guard let idToken = await authViewModel.getValidIdToken() else {
             print("質問分析: 認証トークン取得失敗")
             analyticsError = "認証情報がありません。"

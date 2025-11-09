@@ -1,6 +1,11 @@
 import Foundation
 import Combine
 
+// ★★★ 追加: ブロック確認APIのレスポンス用 ★★★
+struct BlockCheckResponse: Decodable {
+    let isBlockedByTarget: Bool
+}
+
 @MainActor
 class DMViewModel: ObservableObject {
 
@@ -11,15 +16,17 @@ class DMViewModel: ObservableObject {
     // 既存エンドポイント
     private let dmsEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/dms")!
     private let threadsEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/threads")!
+    // ★★★ 追加: ブロック確認用エンドポイント ★★★
+    private let usersApiEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/users")!
 
-    // --- Auth 連携 ---
+
+    // --- Auth 連携 (変更なし) ---
     private var authViewModel: AuthViewModel?
 
     func setAuthViewModel(_ authViewModel: AuthViewModel) {
         self.authViewModel = authViewModel
     }
 
-    // トークン取得
     private func getAuthToken() async -> String? {
         guard let authVM = self.authViewModel else {
             print("DMViewModel: AuthViewModelが設定されていません。")
@@ -27,6 +34,60 @@ class DMViewModel: ObservableObject {
         }
         return await authVM.getValidIdToken()
     }
+    
+    // --- ★★★ ここからブロック確認関数を追加 ★★★ ---
+
+    /// 相手（targetId）が自分をブロックしているか確認する
+    /// - Parameter targetId: 相手のユーザーID
+    /// - Returns: true: ブロックされている / false: ブロックされていない / nil: エラー
+    private func checkIfBlockedByTarget(targetId: String) async -> Bool? {
+        guard let idToken = await getAuthToken() else {
+            print("ブロック確認: 認証トークン取得失敗")
+            return nil // エラー
+        }
+        
+        // GET /users/check-block?targetId={targetId}
+        var comps = URLComponents(url: usersApiEndpoint.appendingPathComponent("check-block"), resolvingAgainstBaseURL: true)
+        comps?.queryItems = [URLQueryItem(name: "targetId", value: targetId)]
+        
+        guard let url = comps?.url else {
+            print("ブロック確認: URL生成失敗")
+            return nil // エラー
+        }
+        
+        // --- ★★★ 修正: do-catchブロックを追加 (エラー 1) ★★★ ---
+        do {
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            // 1. まず HTTPURLResponse にキャストできるか確認
+            guard let http = response as? HTTPURLResponse else {
+                print("ブロック確認API: 不正なレスポンス（HTTPレスポンスではありません）")
+                return nil // エラー
+            }
+            
+            // 2. 次にステータスコードを確認
+            guard http.statusCode == 200 else {
+                let snippet = String(data: data, encoding: .utf8) ?? ""
+                print("ブロック確認API時にサーバーエラー: \(http.statusCode) body: \(snippet.prefix(200))")
+                return nil // エラー
+            }
+
+            let result = try JSONDecoder().decode(BlockCheckResponse.self, from: data)
+            return result.isBlockedByTarget // true または false
+
+        } catch {
+            print("ブロック確認APIの取得またはデコードに失敗: \(error)")
+            return nil // エラー
+        }
+        // --- ★★★ 修正ここまで ★★★ ---
+    }
+    
+    // --- ★★★ ここまで追加 ★★★ ---
+    
 
     // メッセージ一覧を取得: GET /threads/{threadId}/messages
     func fetchMessages(threadId: String) async {
@@ -121,13 +182,15 @@ class DMViewModel: ObservableObject {
 
     // 既存: 会話内送信（現状は同エンドポイントを使用）
     func sendMessage(recipientId: String, senderId: String, questionTitle: String, messageText: String) async -> Bool {
+        // ★注意: 既存の会話内送信も「ブロック確認」が入るようになります。
         return await sendInitialDM(recipientId: recipientId, senderId: senderId, questionTitle: questionTitle, messageText: messageText)
     }
 
+    // --- ★★★ 修正: `private` を削除 (エラー 2) ★★★ ---
     // 最小レスポンス用（{ "threadId": "..." } に対応）
-    private struct MinimalThreadId: Codable { let threadId: String }
+    struct MinimalThreadId: Codable { let threadId: String }
 
-    // 初回DM送信して Thread を返す（POST /dev/dms）
+    // ★★★ sendInitialDMAndReturnThread 関数 (ブロック確認ロジック入り) ★★★
     func sendInitialDMAndReturnThread(recipientId: String,
                                       senderId: String,
                                       questionTitle: String,
@@ -139,7 +202,25 @@ class DMViewModel: ObservableObject {
 
         isLoading = true
         defer { isLoading = false }
+        
+        // --- 1. 送信前にブロック確認 ---
+        let isBlocked = await checkIfBlockedByTarget(targetId: recipientId)
+        
+        if isBlocked == nil {
+            print("DM送信中止: ブロック状態の確認に失敗しました。")
+            // TODO: View側でアラート表示推奨
+            return nil // エラー
+        }
+        
+        if isBlocked == true {
+            print("DM送信中止: 相手からブロックされています。")
+            // TODO: View側でアラート表示推奨
+            return nil
+        }
+        // --- ブロック確認ここまで ---
 
+
+        // --- 2. ブロックされていなければDMを送信 (既存の処理) ---
         let dmPayload = DM(recipientId: recipientId, senderId: senderId, questionTitle: questionTitle, messageText: messageText)
 
         do {
@@ -157,6 +238,7 @@ class DMViewModel: ObservableObject {
                 return nil
             }
 
+            // (既存のレスポンス処理 ... 変更なし)
             // 1) APIがThread相当JSONを返す場合
             if let t = try? JSONDecoder().decode(Thread.self, from: data) {
                 print("DM送信に成功（ThreadデコードOK）。threadId=\(t.threadId)")
@@ -203,4 +285,4 @@ class DMViewModel: ObservableObject {
             return nil
         }
     }
-}
+} // --- ★★★ 修正: クラスの閉じ括弧 (エラー 3, 4) ★★★

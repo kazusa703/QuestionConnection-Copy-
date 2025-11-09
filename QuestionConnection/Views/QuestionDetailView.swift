@@ -6,32 +6,40 @@ struct QuestionDetailView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
     @EnvironmentObject private var profileViewModel: ProfileViewModel
     
-    // ★★★ 通報機能用のStateを追加 ★★★
     @Environment(\.showAuthenticationSheet) private var showAuthenticationSheet
-    @State private var showingReportAlert = false // 通報確認アラート
-    @State private var showingReportSuccessToast = false // 通報成功トースト
-    @State private var isReporting = false // 通報処理中フラグ
+    
+    @State private var showingReportAlert = false
+    @State private var showingReportSuccessToast = false
+    @State private var showingBlockAlert = false
+    @State private var showingBlockSuccessToast = false
+    @State private var showingUnblockSuccessToast = false
+    @State private var isProcessingAction = false
 
     let question: Question
     @State private var hasAnswered: Bool? = nil
     @State private var shouldNavigateToQuiz = false
     @State private var showCopiedToast = false
 
-    // プロフィール側のブックマーク状態（必要に応じて利用）
     private var isBookmarked: Bool {
         profileViewModel.isBookmarked(questionId: question.id)
     }
+    
+    private var isAuthorNotMe: Bool {
+        authViewModel.isSignedIn && authViewModel.userSub != question.authorId
+    }
+    
+    private var isAuthorBlocked: Bool {
+        profileViewModel.isBlocked(userId: question.authorId)
+    }
 
-    // --- ★★★ エラー解決: body を2つに分割 ① ★★★ ---
-    // (VStackの中身をこちらに移動)
+    // --- body を2つに分割 ① (エラー回避のため) ---
     private var contentBody: some View {
         VStack(alignment: .leading, spacing: 20) {
-            // タイトル
+            // (既存のVStackの中身 ... 変更なし)
             Text(question.title)
                 .font(.largeTitle)
                 .fontWeight(.bold)
 
-            // 目的・タグ
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack {
                     if let purpose = question.purpose, !purpose.isEmpty {
@@ -52,7 +60,6 @@ struct QuestionDetailView: View {
                 }
             }
 
-            // 問題番号（シェアコード）
             if let code = question.shareCode, !code.isEmpty {
                 HStack(spacing: 8) {
                     Text("問題番号: \(code)")
@@ -71,7 +78,6 @@ struct QuestionDetailView: View {
                 }
             }
 
-            // 備考
             ScrollView {
                 VStack(alignment: .leading, spacing: 15) {
                     Text("作成者からの備考・説明").font(.headline)
@@ -82,7 +88,6 @@ struct QuestionDetailView: View {
 
             Spacer()
 
-            // クイズ開始ボタン（既存ロジックを踏襲）
             Button(action: attemptToStartQuiz) {
                 HStack {
                     Spacer()
@@ -108,26 +113,51 @@ struct QuestionDetailView: View {
         } // End VStack
     }
     
-    // --- ★★★ エラー解決: body を2つに分割 ② ★★★ ---
-    // (モディファイアはこちらに残す)
+    // --- body を2つに分割 ② (モディファイア) ---
     var body: some View {
         contentBody // ← 分割したVStackを呼び出す
             .padding()
             .navigationTitle("質問詳細")
             .navigationBarTitleDisplayMode(.inline)
-            // --- ★★★ ここから通報用ツールバー (前回提案) ★★★ ---
+            // (ツールバー ... 変更なし)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
+                        // --- 1. 通報ボタン ---
                         Button(role: .destructive) {
                             if authViewModel.isSignedIn {
                                 showingReportAlert = true
                             } else {
-                                // ログインしていなければログインシートを表示
                                 showAuthenticationSheet.wrappedValue = true
                             }
                         } label: {
                             Label("この質問を通報する", systemImage: "exclamationmark.bubble")
+                        }
+                        
+                        // --- 2. ブロック/ブロック解除ボタン ---
+                        if isAuthorNotMe { // 自分の質問でなければ
+                            Button(role: .destructive) {
+                                if isAuthorBlocked {
+                                    Task {
+                                        isProcessingAction = true
+                                        await profileViewModel.removeBlock(blockedUserId: question.authorId)
+                                        isProcessingAction = false
+                                        withAnimation { showingUnblockSuccessToast = true }
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                                            withAnimation { showingUnblockSuccessToast = false }
+                                        }
+                                    }
+                                } else {
+                                    showingBlockAlert = true
+                                }
+                            } label: {
+                                if isAuthorBlocked {
+                                    Label("ブロックを解除する", systemImage: "hand.thumbsup")
+                                } else {
+                                    Label("このユーザーをブロックする", systemImage: "hand.raised.slash")
+                                }
+                            }
+                            .disabled(isProcessingAction)
                         }
                         
                     } label: {
@@ -135,15 +165,21 @@ struct QuestionDetailView: View {
                     }
                 }
             }
-            // --- ★★★ ここまで通報用ツールバー ★★★ ---
             
+            // --- ★★★ .onAppear を修正 ★★★ ---
             .onAppear {
+                // ★ 1. AuthViewModelを *先* にセットする
+                quizViewModel.setAuthViewModel(authViewModel)
+                
+                // ★ 2. その後に解答状況を確認する
                 if authViewModel.isSignedIn {
                     checkAnswerStatus()
                 } else {
                     hasAnswered = false
                 }
             }
+            // --- ★★★ 修正ここまで ★★★ ---
+            
             .onChange(of: authViewModel.isSignedIn) { _, isSignedIn in
                 if isSignedIn {
                     checkAnswerStatus()
@@ -153,10 +189,11 @@ struct QuestionDetailView: View {
             }
             .navigationDestination(isPresented: $shouldNavigateToQuiz) {
                 QuizView(question: question)
-                    .environmentObject(authViewModel) // ★ 遷移先にも渡す
-                    .environmentObject(profileViewModel) // ★ 遷移先にも渡す
+                    .environmentObject(authViewModel)
+                    .environmentObject(profileViewModel)
             }
             .overlay(alignment: .top) {
+                // (各種トースト ... 変更なし)
                 if showCopiedToast {
                     Text("コピーしました")
                         .font(.caption2)
@@ -166,7 +203,6 @@ struct QuestionDetailView: View {
                         .transition(.opacity)
                         .padding(.top, 8)
                 }
-                // ★ 通報成功トースト
                 if showingReportSuccessToast {
                     Text("通報が完了しました。")
                         .font(.caption)
@@ -176,39 +212,75 @@ struct QuestionDetailView: View {
                         .transition(.opacity)
                         .padding(.top, 8)
                 }
+                if showingBlockSuccessToast {
+                    Text("ブロックしました。")
+                        .font(.caption)
+                        .padding(10)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(8)
+                        .transition(.opacity)
+                        .padding(.top, 8)
+                }
+                if showingUnblockSuccessToast {
+                    Text("ブロックを解除しました。")
+                        .font(.caption)
+                        .padding(10)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(8)
+                        .transition(.opacity)
+                        .padding(.top, 8)
+                }
             }
-            // ★ 通報確認アラート
+            // (各種アラート ... 変更なし)
             .alert("通報の確認", isPresented: $showingReportAlert) {
                 Button("キャンセル", role: .cancel) { }
                 Button("通報する", role: .destructive) {
-                    // 通報処理を実行
                     Task {
-                        isReporting = true
+                        isProcessingAction = true
                         let success = await profileViewModel.reportContent(
                             targetId: question.questionId,
                             targetType: "question",
-                            reason: "inappropriate", // 理由はアプリ側で固定 or 選択させる
+                            reason: "inappropriate",
                             detail: "（ユーザーによる詳細報告なし）"
                         )
-                        isReporting = false
+                        isProcessingAction = false
                         if success {
-                            // 成功トーストを表示
                             withAnimation { showingReportSuccessToast = true }
                             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                                 withAnimation { showingReportSuccessToast = false }
                             }
                         } else {
-                            // TODO: 失敗アラートを表示
-                            print("通報に失敗しました")
+                            // TODO: 失敗アラート
                         }
                     }
                 }
             } message: {
                 Text("「\(question.title)」を不適切なコンテンツとして通報しますか？")
             }
-            .task {
-                quizViewModel.setAuthViewModel(authViewModel)
+            .alert("ブロックの確認", isPresented: $showingBlockAlert) {
+                Button("キャンセル", role: .cancel) { }
+                Button("ブロックする", role: .destructive) {
+                    Task {
+                        isProcessingAction = true
+                        let success = await profileViewModel.addBlock(blockedUserId: question.authorId)
+                        isProcessingAction = false
+                        if success {
+                            withAnimation { showingBlockSuccessToast = true }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                                withAnimation { showingBlockSuccessToast = false }
+                            }
+                        } else {
+                            // TODO: 失敗アラート
+                        }
+                    }
+                }
+            } message: {
+                Text("このユーザーをブロックしますか？\n（ブロックした相手からのDMが拒否されます）")
             }
+            // ★★★ .task は不要になったので削除 ★★★
+            // .task {
+            //     quizViewModel.setAuthViewModel(authViewModel)
+            // }
     } // End body
 
     
@@ -227,6 +299,7 @@ struct QuestionDetailView: View {
         }
         hasAnswered = nil
         Task {
+            // ★ .onAppear で VM がセットされた後に呼ばれる
             let result = await quizViewModel.checkIfAlreadyAnswered(questionId: question.questionId)
             hasAnswered = result
         }
