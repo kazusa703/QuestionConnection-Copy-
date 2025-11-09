@@ -4,6 +4,8 @@ struct BoardView: View {
     @StateObject private var viewModel = QuestionViewModel()
     // 認証情報
     @EnvironmentObject private var authViewModel: AuthViewModel
+    // ★★★ 1. ProfileViewModel を追加 ★★★
+    @EnvironmentObject private var profileViewModel: ProfileViewModel
 
     // --- 絞り込み機能用の状態変数 ---
     @State private var showingFilterSheet = false
@@ -14,16 +16,29 @@ struct BoardView: View {
 
     // 検索バー用の絞り込みロジック（タイトル/タグ/問題番号）
     private var filteredQuestions: [Question] {
+        
+        // ★★★ 2. 検索フィルタ (既存ロジック) ★★★
+        let searchedQuestions: [Question]
         if searchText.isEmpty {
-            return viewModel.questions
+            searchedQuestions = viewModel.questions
         } else {
             let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-            return viewModel.questions.filter { question in
+            searchedQuestions = viewModel.questions.filter { question in
                 let titleMatch = question.title.localizedCaseInsensitiveContains(keyword)
                 let tagMatch = question.tags.contains { $0.localizedCaseInsensitiveContains(keyword) }
                 let codeMatch = (question.shareCode ?? "").localizedCaseInsensitiveContains(keyword)
                 return titleMatch || tagMatch || codeMatch
             }
+        }
+        
+        // ★★★ 3. ブロックフィルタ (追加ロジック) ★★★
+        guard authViewModel.isSignedIn else {
+            return searchedQuestions // 未ログイン時はブロックフィルタ不要
+        }
+        
+        // ブロックリストに *含まれていない* authorId の質問のみ表示
+        return searchedQuestions.filter { question in
+            !profileViewModel.isBlocked(userId: question.authorId)
         }
     }
 
@@ -75,8 +90,11 @@ struct BoardView: View {
                         .padding()
                     Spacer()
                 } else {
+                    // ★★★ 4. filteredQuestions (ブロックフィルタ適用済み) を使用 ★★★
                     List(filteredQuestions) { question in
-                        NavigationLink(destination: QuestionDetailView(question: question)) {
+                        // ★★★ 5. 遷移先に ProfileViewModel を渡す (重要) ★★★
+                        // (QuestionDetailView がブロック操作で ProfileViewModel を使うため)
+                        NavigationLink(destination: QuestionDetailView(question: question).environmentObject(profileViewModel)) {
                             VStack(alignment: .leading) {
                                 Text(question.title)
                                     .font(.headline)
