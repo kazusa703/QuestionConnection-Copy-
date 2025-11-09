@@ -12,6 +12,11 @@ struct SettingsView: View {
     // ★★★ 削除失敗時用のアラートを追加 ★★★
     @State private var showingDeleteErrorAlert = false
     @State private var deleteErrorMessage = ""
+    
+    // ★★★ 公開したURLをここに追加 ★★★
+    private let termsURL = URL(string: "https://kazusa703.github.io/QuestionConnection-Copy-/terms.md")!
+    private let privacyURL = URL(string: "https://kazusa703.github.io/QuestionConnection-Copy-/privacy.md")!
+
 
     var body: some View {
         Form {
@@ -57,9 +62,8 @@ struct SettingsView: View {
             
             // --- ★★★ 情報セクション (URLを修正) ★★★ ---
             Section(header: Text("情報")) {
-                // ★★★ URLは必ず後で有効なものに差し替えてください ★★★
-                Link("利用規約", destination: URL(string: "https://（ここにあなたのWebサイトのURL）/terms")!)
-                Link("プライバシーポリシー", destination: URL(string: "https://（ここにあなたのWebサイトのURL）/privacy")!)
+                Link("利用規約", destination: termsURL)
+                Link("プライバシーポリシー", destination: privacyURL)
                 Text("アプリバージョン 1.0.0").foregroundColor(.secondary)
             }
         }
@@ -111,17 +115,5 @@ struct SettingsView: View {
         SettingsView()
             .environmentObject(authVM)
             .environmentObject(profileVM)
-    }
-}
-#Preview {
-    // NavigationStackで囲んでプレビュー
-    NavigationStack {
-        // ★★★ プレビュー用にダミーのViewModelを作成 ★★★
-        let authVM = AuthViewModel()
-        let profileVM = ProfileViewModel(authViewModel: authVM)
-        
-        SettingsView()
-            .environmentObject(authVM) // ダミーのAuthViewModelを渡す
-            .environmentObject(profileVM) // ダミーのProfileViewModelを渡す
     }
 }
