@@ -60,6 +60,10 @@ struct SettingsView: View {
                 .disabled(isDeleting)
             }
             
+            AccountInfoSection()
+                .environmentObject(authViewModel)
+                .environmentObject(profileViewModel)
+            
             // --- ★★★ 情報セクション (URLを修正) ★★★ ---
             Section(header: Text("情報")) {
                 Link("利用規約", destination: termsURL)
