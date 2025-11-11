@@ -6,6 +6,12 @@ struct ProfileView: View {
     @Environment(\.showAuthenticationSheet) private var showAuthenticationSheet
 
     @State private var originalNickname: String = ""
+    
+    // ユーザー情報セクションの開閉状態
+    @State private var isUserInfoExpanded: Bool = false
+    
+    // ★★★ 1.「自分が作成した質問」セクションの開閉状態を管理するStateを追加 ★★★
+    @State private var isMyQuestionsExpanded: Bool = false
 
     private var isNicknameChanged: Bool {
         viewModel.nickname != originalNickname
@@ -15,7 +21,8 @@ struct ProfileView: View {
         NavigationStack {
             if authViewModel.isSignedIn {
                 Form {
-                    Section(header: Text("ユーザー情報")) {
+                    // --- ユーザー情報セクション (変更なし) ---
+                    DisclosureGroup("ユーザー情報", isExpanded: $isUserInfoExpanded) {
                         // --- Email表示 ---
                         HStack {
                             Text("Email")
@@ -59,14 +66,14 @@ struct ProfileView: View {
                         }
                         .disabled(viewModel.isNicknameLoading || !isNicknameChanged)
 
-                    } // End Section User Info
+                    } // End DisclosureGroup (User Info)
                     .alert("プロフィール", isPresented: $viewModel.showNicknameAlert) {
                         Button("OK") { }
                     } message: {
                         Text(viewModel.nicknameAlertMessage ?? "不明なエラー")
                     }
 
-                    // --- クイズ成績セクション ---
+                    // --- クイズ成績セクション (変更なし) ---
                     Section(header: Text("クイズ成績")) {
                         if viewModel.isLoadingUserStats {
                             HStack { Spacer(); ProgressView(); Spacer() }
@@ -79,34 +86,26 @@ struct ProfileView: View {
                         }
                     }
 
-                    // --- 自分が作成した質問セクション ---
-                    Section(header: Text("自分が作成した質問")) {
+                    // ★★★ 2. 従来の Section を DisclosureGroup に変更 ★★★
+                    DisclosureGroup("自分が作成した質問", isExpanded: $isMyQuestionsExpanded) {
                          if viewModel.isLoadingMyQuestions {
                              HStack { Spacer(); ProgressView(); Spacer() }
                         } else if viewModel.myQuestions.isEmpty {
                             Text("まだ質問を作成していません。").foregroundColor(.secondary)
                         } else {
-                            List(viewModel.myQuestions) { question in
+                            // DisclosureGroup内でListを使うとインデントが深くなりすぎる場合があるため、
+                            // Listを削除し、ForEachで直接リンクを表示します。
+                            ForEach(viewModel.myQuestions) { question in
                                 NavigationLink(destination: QuestionAnalyticsView(question: question).environmentObject(viewModel)) {
                                     VStack(alignment: .leading) {
                                         Text(question.title).font(.headline)
                                         Text("タグ: \(question.tags.joined(separator: ", "))").font(.caption).foregroundColor(.secondary)
                                     }
+                                    .padding(.vertical, 4) // Listのセルのような余白を追加
                                 }
                             }
                         }
-                    }
-
-                    // --- ★★★ 修正: ログアウトボタンセクションを削除 ★★★ ---
-                    /*
-                    Section {
-                        Button(role: .destructive) {
-                            authViewModel.signOut()
-                        } label: {
-                            Text("ログアウト")
-                        }
-                    }
-                    */
+                    } // ★★★ End DisclosureGroup (My Questions) ★★★
 
                 } // End Form
                 .onAppear {
@@ -122,23 +121,20 @@ struct ProfileView: View {
                          fetchProfileData()
                      }
                 }
-                // --- ★★★ 追加: ツールバーに設定ボタンを追加 ★★★ ---
+                // --- ツールバー (変更なし) ---
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
-                                            // ★★★ 修正: Button を NavigationLink に変更 ★★★
                                             NavigationLink {
-                                                // 遷移先のViewを指定
                                                 SettingsView()
-                                                    .environmentObject(authViewModel) // 遷移先にもViewModelを渡す
+                                                    .environmentObject(authViewModel)
                                             } label: {
-                                                // リンクの見た目として歯車アイコンを表示
                                                 Image(systemName: "gearshape")
                                             }
                     }
                 }
 
             } else {
-                // --- ゲストユーザー向けの表示 ---
+                // --- ゲストユーザー向けの表示 (変更なし) ---
                 VStack(spacing: 20) {
                     Image(systemName: "person.crop.circle.fill")
                         .font(.system(size: 80))
@@ -194,4 +190,5 @@ struct ProfileView: View {
              viewModel.nickname = ""
              originalNickname = ""
         }
-    }
+    
+}
