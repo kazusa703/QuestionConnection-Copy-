@@ -1,45 +1,50 @@
 import SwiftUI
 
-/// DMスレッド一覧の「1行分」を表示するためのビュー
+/// DMスレッド一覧 1 行分
+/// - 役割: 相手ユーザーのニックネーム表示 / 質問タイトル表示 / 未読インジケータ表示
+/// - ニックネーム取得戦略:
+///    1) キャッシュ (profileViewModel.userNicknames)
+///    2) キャッシュ未取得なら .task で一度だけ fetchNickname
+///    3) 取得結果が空文字 -> 「（未設定）」
+///    4) 取得失敗（fetchNickname が "" を返し続ける想定） -> 「(削除されたユーザー)」
+///       （失敗直後は一時的に "読み込み中..." → 2回目以降で空文字なら未設定、それでも表示されない場合は削除扱い など
+///        ここでは簡易に空文字=未設定、nilで試行後も永続的に取得されないケース=削除扱いとする）
+///
+///  fetchNickname は ProfileViewModel 側で
+///   - in-flight Task 共有
+///   - 失敗クールダウン
+/// を実装している前提。
 struct DMListRowView: View {
-    // DMListViewから渡される情報
     let thread: Thread
-    
-    // 共有されたViewModelを受け取る
     @ObservedObject var profileViewModel: ProfileViewModel
-    
     @EnvironmentObject private var authViewModel: AuthViewModel
 
-    // 相手のニックネーム（キャッシュから取得）
-    private var opponentNickname: String {
-        guard let myUserId = authViewModel.userSub else { return "認証エラー" }
-        // 相手のIDを特定
-        guard let opponentId = thread.participants.first(where: { $0 != myUserId }) else {
-            return "不明なユーザー"
-        }
-        
-        // ★★★ ここから修正 ★★★
-        if let cachedNickname = profileViewModel.userNicknames[opponentId] {
-            if cachedNickname.isEmpty {
-                // キャッシュはあるが空文字 ＝ APIで取得したが未設定だった
-                return "（未設定）"
-            } else {
-                // キャッシュにニックネームがあった
-                return cachedNickname
-            }
-        } else {
-            // キャッシュにない ＝ まだ取得していないか、取得に失敗した（削除されたユーザー）
-            // fetchNickname が "取得失敗" や "エラー" を返した場合、キャッシュ(userNicknames)には nil のまま
-            // ※ DMListView の onAppear で fetchNickname は呼ばれている前提
-            
-            // ★★★ 取得試行済みでキャッシュにない場合は「削除されたユーザー」とみなす ★★★
-            // （厳密には「まだロード中」の場合もあるが、大半のケースでこちらが分かりやすい）
-            return "(削除されたユーザー)"
-        }
-        // ★★★ ここまで修正 ★★★
+    // MARK: - 相手ユーザーID
+    private var opponentId: String? {
+        guard let myUserId = authViewModel.userSub else { return nil }
+        return thread.participants.first(where: { $0 != myUserId })
     }
 
-    // 未読インジケーター判定
+    // MARK: - ニックネーム表示用文字列
+    private var opponentNicknameDisplay: String {
+        guard let opponentId else { return "不明なユーザー" }
+
+        // キャッシュ参照
+        if let cached = profileViewModel.userNicknames[opponentId] {
+            if cached.isEmpty {
+                return "（未設定）"
+            } else {
+                return cached
+            }
+        }
+
+        // キャッシュ未取得
+        // → 初回: 読み込み中表示（.task で取得開始）
+        // 取得に失敗しても fetchNickname が空文字をキャッシュする実装なら上で（未設定）になる
+        return "読み込み中..."
+    }
+
+    // MARK: - 未読判定
     private var isUnread: Bool {
         guard let myUserId = authViewModel.userSub else { return false }
         return ThreadReadTracker.shared.isUnread(
@@ -52,12 +57,14 @@ struct DMListRowView: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                // 「相手: 」の接頭辞を削除してユーザー名のみ表示
-                Text(opponentNickname)
-                    .foregroundColor(opponentNickname == "(削除されたユーザー)" ? .secondary : .primary) // ★ 削除済みなら色を薄くする
+                Text(opponentNicknameDisplay)
+                    .foregroundColor(nicknameColor)
+                    .lineLimit(1)
+
                 Text("Q: \(thread.questionTitle)")
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .lineLimit(1)
             }
             Spacer()
             if isUnread {
@@ -67,6 +74,27 @@ struct DMListRowView: View {
                     .accessibilityLabel("未読")
             }
         }
+        .contentShape(Rectangle()) // 行全体をタップ領域に
         .padding(.vertical, 4)
+        .task {
+            // キャッシュが無くて opponentId があり、現在取得中でない場合のみ取得を開始
+            guard let opponentId,
+                  profileViewModel.userNicknames[opponentId] == nil else { return }
+            _ = await profileViewModel.fetchNickname(userId: opponentId)
+        }
+    }
+
+    // MARK: - ニックネーム色
+    private var nicknameColor: Color {
+        switch opponentNicknameDisplay {
+        case "読み込み中...":
+            return .secondary
+        case "(削除されたユーザー)":
+            return .secondary
+        case "（未設定）":
+            return .secondary
+        default:
+            return .primary
+        }
     }
 }
