@@ -17,13 +17,13 @@ struct InitialDMView: View {
     @State private var pendingThread: Thread? = nil
     @State private var navigateToThread: Thread? = nil
 
-    // (topicText の計算ロジック ... 変更なし)
+    // 表示用のトピック文（同じなら非表示）
     private var topicText: String? {
         let t = questionTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let nick = recipientNickname.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return nil }
         if t == nick { return nil }
-        return "(\(t) )"
+        return "(\(t))"
     }
 
     var body: some View {
@@ -40,15 +40,21 @@ struct InitialDMView: View {
             }
 
             TextEditor(text: $messageText)
-                .border(Color.gray, width: 0.5)
-                .padding()
+                .border(Color.gray.opacity(0.4), width: 0.5)
+                .frame(minHeight: 160)
 
             Button(action: sendDM) {
-                if viewModel.isLoading { ProgressView() } else { Text("送信") }
+                if viewModel.isLoading {
+                    ProgressView()
+                } else {
+                    Text("送信")
+                }
             }
             .frame(maxWidth: .infinity, minHeight: 44)
             .buttonStyle(.borderedProminent)
             .disabled(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isLoading)
+
+            Spacer()
         }
         .padding()
         .navigationTitle("DM作成")
@@ -62,18 +68,17 @@ struct InitialDMView: View {
             Text(alertMessage)
         }
         .navigationDestination(item: $navigateToThread) { thread in
-            ConversationView(thread: thread)
+            // 送信直後は同じ VM を会話画面に共有
+            ConversationView(thread: thread, viewModel: viewModel)
                 .environmentObject(authViewModel)
+                .environmentObject(profileViewModel)
         }
         .task {
-            // ★★★ 修正: VMにAuthViewModelをセット ★★★
-            // (DMViewModel.swift が v5 (ブロック確認機能付き) に更新されている前提)
             viewModel.setAuthViewModel(authViewModel)
             self.recipientNickname = await profileViewModel.fetchNickname(userId: recipientId)
         }
     }
 
-    // --- ★★★ sendDM 関数を修正 (アラートメッセージ) ★★★ ---
     private func sendDM() {
         guard let senderId = authViewModel.userSub else {
             alertTitle = "エラー"
@@ -85,26 +90,21 @@ struct InitialDMView: View {
         guard !text.isEmpty else { return }
 
         Task {
-            // v5 の DMViewModel は、ブロックされている場合 nil を返す
             let thread = await viewModel.sendInitialDMAndReturnThread(
                 recipientId: recipientId,
                 senderId: senderId,
                 questionTitle: questionTitle,
                 messageText: text
             )
-            
             if let thread {
-                // --- 成功 ---
                 let seenAt = Date().addingTimeInterval(1)
                 ThreadReadTracker.shared.markSeen(userId: senderId, threadId: thread.threadId, date: seenAt)
                 self.pendingThread = thread
                 alertTitle = "送信完了"
                 alertMessage = "メッセージを送信しました。OKで会話に移動します。"
             } else {
-                // --- 失敗 ---
-                alertTitle = "送信エラー"
-                // ★ 失敗理由に「ブロック」の可能性を明記
-                alertMessage = "メッセージの送信に失敗しました。\n相手からブロックされているか、ネットワークに問題がある可能性があります。"
+                alertTitle = "エラー"
+                alertMessage = "メッセージの送信に失敗しました。"
             }
             showAlert = true
         }
