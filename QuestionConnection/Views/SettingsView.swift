@@ -9,23 +9,32 @@ struct SettingsView: View {
     @State private var showingDeleteAlert = false
     @State private var isDeleting = false
     
-    // ★★★ 削除失敗時用のアラートを追加 ★★★
     @State private var showingDeleteErrorAlert = false
     @State private var deleteErrorMessage = ""
     
-    // ★★★ 公開したURLをここに追加 ★★★
     private let termsURL = URL(string: "https://kazusa703.github.io/QuestionConnection-Copy-/terms.md")!
     private let privacyURL = URL(string: "https://kazusa703.github.io/QuestionConnection-Copy-/privacy.md")!
 
 
     var body: some View {
         Form {
-            // (通知設定セクションは変更なし)
+            // ★★★ 1. 通知設定セクションを修正 ★★★
             Section(header: Text("通知設定")) {
+                // 既存のトグル
                 Toggle("全問正解の通知を受け取る", isOn: $profileViewModel.notifyOnCorrectAnswer)
                     .onChange(of: profileViewModel.notifyOnCorrectAnswer) { _, newValue in
                         Task {
+                            // 既存のメソッドを呼ぶ
                             await profileViewModel.updateNotificationSetting(isOn: newValue)
+                        }
+                    }
+                
+                // ★★★ 2. DM通知用のトグルを追加 ★★★
+                Toggle("DMが来たら通知を受け取る", isOn: $profileViewModel.notifyOnDM)
+                    .onChange(of: profileViewModel.notifyOnDM) { _, newValue in
+                        Task {
+                            // 新しく追加したメソッドを呼ぶ
+                            await profileViewModel.updateDMNotificationSetting(isOn: newValue)
                         }
                     }
             }
@@ -60,11 +69,11 @@ struct SettingsView: View {
                 .disabled(isDeleting)
             }
             
+            // (AccountInfoSection, 情報セクションは変更なし)
             AccountInfoSection()
                 .environmentObject(authViewModel)
                 .environmentObject(profileViewModel)
             
-            // --- ★★★ 情報セクション (URLを修正) ★★★ ---
             Section(header: Text("情報")) {
                 Link("利用規約", destination: termsURL)
                 Link("プライバシーポリシー", destination: privacyURL)
@@ -75,10 +84,12 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             Task {
+                // ★★★ 3. onAppearで両方の設定を読み込む ★★★
+                // (fetchNotificationSettings が両方読み込むように変更済み)
                 await profileViewModel.fetchNotificationSettings()
             }
         }
-        // ★★★ 削除確認アラート (ロジック修正) ★★★
+        // (アラート関連は変更なし)
         .alert("アカウントの削除", isPresented: $showingDeleteAlert) {
             Button("キャンセル", role: .cancel) { }
             Button("削除", role: .destructive) {
@@ -90,7 +101,6 @@ struct SettingsView: View {
                         isDeleting = false
                         dismiss()
                     } else {
-                        // ★★★ 失敗時のアラート文言を設定 ★★★
                         deleteErrorMessage = "アカウントの削除に失敗しました。時間をおいて再度お試しください。"
                         showingDeleteErrorAlert = true
                         isDeleting = false
@@ -100,7 +110,6 @@ struct SettingsView: View {
         } message: {
             Text("この操作は元に戻せません。アカウントに関連するすべてのデータ（ブックマーク、DMなど）が削除されます。本当に削除しますか？")
         }
-        // ★★★ 削除失敗時アラート ★★★
         .alert("削除エラー", isPresented: $showingDeleteErrorAlert) {
             Button("OK") { }
         } message: {

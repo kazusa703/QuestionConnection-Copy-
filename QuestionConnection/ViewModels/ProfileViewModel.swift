@@ -2,7 +2,7 @@ import Foundation
 import Combine
 // API呼び出し自体はURLSessionを使うため、AWSClientRuntime は不要です
 
-// (UserStats, QuestionAnalyticsResult, UserProfile, BookmarkResponse, BlocklistResponse 構造体は変更なし)
+// (UserStats, QuestionAnalyticsResult, BookmarkResponse, BlocklistResponse 構造体は変更なし)
 struct UserStats: Codable {
     let totalAnswers: Int
     let correctAnswers: Int
@@ -13,9 +13,12 @@ struct QuestionAnalyticsResult: Codable {
     let correctAnswers: Int
     let accuracy: Double
 }
+
+// ★★★ 1. UserProfile に notifyOnDM を追加 ★★★
 struct UserProfile: Codable {
     let nickname: String?
     let notifyOnCorrectAnswer: Bool? // 通知設定
+    let notifyOnDM: Bool? // ★ DM通知設定 (追加)
 }
 struct BookmarkResponse: Decodable {
     let bookmarks: [String] // もしキー名が違うならここを修正
@@ -41,36 +44,34 @@ class ProfileViewModel: ObservableObject {
     @Published var nicknameAlertMessage: String?
     @Published var showNicknameAlert = false
     
-    // (blockedUserIds, isLoadingBlocklist は変更なし)
+    // (blockedUserIds ... isLoadingSettings までのプロパティは変更なし)
     @Published var blockedUserIds: Set<String> = []
     @Published var isLoadingBlocklist = false
-    
-    // (bookmarkedQuestionIds, isLoadingBookmarks, isDeletingQuestion, deletionError は変更なし)
     @Published var bookmarkedQuestionIds: Set<String> = []
     @Published var isLoadingBookmarks = false
     @Published var isDeletingQuestion = false
     @Published var deletionError: String?
     
+    // (notifyOnCorrectAnswer は変更なし)
     @Published var notifyOnCorrectAnswer: Bool = false
+    // ★★★ 2. DM通知用の設定変数を追加 ★★★
+    @Published var notifyOnDM: Bool = false
+    
     @Published var isLoadingSettings: Bool = false
 
 
-    // --- ★★★ 1. 新しいニックネームキャッシュ戦略のプロパティ ★★★ ---
+    // (キャッシュ戦略 ... 変更なし)
     @Published var userNicknames: [String: String] = [:] // キャッシュ
     private var inFlightNicknameTasks: [String: Task<String, Never>] = [:] // 進行中のタスク
     private var failedAt: [String: Date] = [:] // 失敗記録
     private let retryCooldown: TimeInterval = 60 // 60秒のクールダウン
-    // --- ★★★ ここまで ★★★ ---
 
 
-    // (apiEndpoint の定義は変更なし)
+    // (apiEndpoint, authViewModel, init ... 変更なし)
     private let usersApiEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/users")!
     private let questionsApiEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/questions")!
-    
-    // AuthViewModelを保持 (変更なし)
     private let authViewModel: AuthViewModel
 
-    // initでAuthViewModelを受け取る (変更なし)
     init(authViewModel: AuthViewModel) {
         self.authViewModel = authViewModel
         Task {
@@ -81,7 +82,7 @@ class ProfileViewModel: ObservableObject {
         }
     }
 
-    // (deleteQuestion, fetchBookmarks, addBookmark, removeBookmark, isBookmarked ... 変更なし)
+    // (deleteQuestion ... registerDeviceToken までの関数は変更なし)
     // ... (省略) ...
     func deleteQuestion(questionId: String) async -> Bool {
         guard authViewModel.isSignedIn, !isDeletingQuestion else { return false }
@@ -211,37 +212,23 @@ class ProfileViewModel: ObservableObject {
     func isBookmarked(questionId: String) -> Bool {
         return bookmarkedQuestionIds.contains(questionId)
     }
-
-    // --- ★★★ 2. handleSignOut を新しいロジックに置き換え ★★★ ---
-    /// ログイン時に各種データを取得する
     func handleSignIn() {
         Task {
             await fetchBookmarks()
             await fetchBlocklist()
         }
     }
-    /// ログアウト時に呼ぶ（キャッシュと進行中タスクをクリア）
     func handleSignOut() {
-        // 既存のデータクリア
         bookmarkedQuestionIds = []
         blockedUserIds = []
         myQuestions = []
         userStats = nil
-        
-        // 新しいニックネームキャッシュ戦略のクリアロジック
         userNicknames = [:]
         failedAt = [:]
-        // 進行中タスクをキャンセル
         inFlightNicknameTasks.values.forEach { $0.cancel() }
         inFlightNicknameTasks = [:]
-        
         print("ローカルの全キャッシュと進行中タスクをクリアしました。")
     }
-    // --- ★★★ 修正ここまで ★★★ ---
-
-
-    // (registerDeviceToken ... 変更なし)
-    // ... (省略) ...
     func registerDeviceToken(deviceTokenString: String) async {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else {
             print("デバイストークン登録: 未ログインのためスキップ")
@@ -270,70 +257,43 @@ class ProfileViewModel: ObservableObject {
             print("デバイストークン登録APIリクエストエラー: \(error)")
         }
     }
-    
-    // --- ★★★ 3. fetchNickname 関数を新しいロジックに置き換え ★★★ ---
-    
-    /// ニックネームを取得（キャッシュ → in-flight 共有 → ネットワーク）
-    /// (UI側は「（未設定）」または「(削除されたユーザー)」を期待する)
+
+    // (fetchNickname, requestNicknameFromAPI ... 変更なし)
+    // ... (省略) ...
     func fetchNickname(userId: String) async -> String {
-        // 1) キャッシュ命中なら即返
         if let cached = userNicknames[userId] {
             print("ニックネーム(ID: \(userId))をキャッシュから取得: \(cached)")
             return cached.isEmpty ? "（未設定）" : cached // ★ UI表示用に変換
         }
-
-        // 2) 失敗直後は一定時間スキップ（クールダウン）
         if let lastFailed = failedAt[userId], Date().timeIntervalSince(lastFailed) < retryCooldown {
             print("ニックネーム(ID: \(userId)): クールダウン中のためスキップ")
             return "(削除されたユーザー)" // ★ UI表示用に変換
         }
-
-        // 3) 進行中タスクがあれば待機（重複防止）
         if let task = inFlightNicknameTasks[userId] {
             print("ニックネーム(ID: \(userId)): 進行中のタスクを待機")
             let name = await task.value
             return name.isEmpty ? "(削除されたユーザー)" : name // ★ UI表示用に変換
         }
-        
         guard !userId.isEmpty else { return "不明" }
-
-        // 4) 新規タスクを登録して実行
         let task = Task<String, Never> { [weak self] in
             guard let self else { return "" }
-            
-            // ネットワーク（メイン外）
-            // ★ requestNicknameFromAPI は nil (失敗) または String (成功) を返す
-            // ★ 失敗/削除済みの場合は nil が返る
             let name = await self.requestNicknameFromAPI(userId: userId)
-            
-            // ★ nil が返ってきたら空文字 "" をキャッシュさせる
-            // ★ ニックネーム未設定（""）と、ユーザー削除（nil）は、両方とも "" としてキャッシュする
             return name ?? ""
         }
         inFlightNicknameTasks[userId] = task
         print("ニックネーム(ID: \(userId)): 新規タスク開始")
-
-        // 5) 完了処理（キャッシュ格納・in-flight削除・失敗記録）
         let name = await task.value
-        
-        // ★ @MainActor 上で実行されていることを保証
         self.userNicknames[userId] = name
         inFlightNicknameTasks.removeValue(forKey: userId)
-
         if name.isEmpty {
-            // 失敗(nil) または 未設定("") だった場合
             print("ニックネーム(ID: \(userId)): 取得結果が空のため失敗として記録")
             failedAt[userId] = Date()
-            // ★ UI表示用に変換
             return name.isEmpty ? "(削除されたユーザー)" : name
         } else {
-            // 成功した場合
             failedAt.removeValue(forKey: userId)
             return name // ★ UI表示用に変換
         }
     }
-
-    /// 複数IDをまとめてウォームアップ（一覧取得直後などに呼ぶ）
     func warmFetchNicknames(for userIds: Set<String>) {
         for uid in userIds {
             if userNicknames[uid] == nil, inFlightNicknameTasks[uid] == nil {
@@ -343,49 +303,35 @@ class ProfileViewModel: ObservableObject {
             }
         }
     }
-    
-    // MARK: - 実際のAPI呼び出し（あなたの実装に差し替え）
-    /// ニックネーム取得のコアロジック
-    /// - Returns: 成功時はニックネーム(String), 失敗時または削除済みの場合は nil
     private func requestNicknameFromAPI(userId: String) async -> String? {
         guard !userId.isEmpty else { return nil }
-        
         guard let idToken = await authViewModel.getValidIdToken() else {
             print("ニックネーム取得(API): 認証トークン取得失敗")
             return nil
         }
-        
         let url = usersApiEndpoint.appendingPathComponent(userId)
-        
         do {
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
             request.setValue(idToken, forHTTPHeaderField: "Authorization")
-
             let (data, response) = try await URLSession.shared.data(for: request)
-
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                 print("ニックネーム取得(API)時にサーバーエラー(ID: \(userId)): \(response)")
                 return nil // ★ 失敗時は nil
             }
-            
             guard let profile = try? JSONDecoder().decode(UserProfile.self, from: data) else {
                 print("ニックネーム取得(API): 200 OK だがプロファイル内容がデコード不可 (削除ユーザー？) ID: \(userId)")
                 return nil // ★ 失敗時は nil
             }
-            
-            // ★ 成功時のみニックネーム（nil または "" または "名前"）を返す
             return profile.nickname
-
         } catch {
             print("ニックネーム取得(API)へのリクエスト中にエラー(ID: \(userId)): \(error)")
             return nil // ★ 失敗時は nil
         }
     }
-    // --- ★★★ 修正ここまで ★★★ ---
-    
-    // (fetchMyProfile, updateNickname, fetchNotificationSettings, updateNotificationSetting ... 変更なし)
-    // ... (省略) ...
+
+
+    // ★★★ 3. fetchMyProfile に notifyOnDM を追加 ★★★
     func fetchMyProfile(userId: String) async {
         guard !userId.isEmpty else { return }
         isLoadingSettings = true
@@ -408,12 +354,15 @@ class ProfileViewModel: ObservableObject {
             let profile = try JSONDecoder().decode(UserProfile.self, from: data)
             self.nickname = profile.nickname ?? ""
             self.notifyOnCorrectAnswer = profile.notifyOnCorrectAnswer ?? false
+            self.notifyOnDM = profile.notifyOnDM ?? false // ★ 追加
             userNicknames[userId] = profile.nickname ?? ""
         } catch {
             print("プロファイル取得APIへのリクエスト中にエラー(ID: \(userId)): \(error)")
         }
         isLoadingSettings = false
     }
+    
+    // (updateNickname は変更なし)
     func updateNickname(userId: String) async {
         guard !userId.isEmpty else { return }
         guard let idToken = await authViewModel.getValidIdToken() else {
@@ -452,6 +401,8 @@ class ProfileViewModel: ObservableObject {
         }
         isNicknameLoading = false
     }
+    
+    // ★★★ 4. fetchNotificationSettings に notifyOnDM を追加 ★★★
     func fetchNotificationSettings() async {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return }
         guard !isLoadingSettings else { return }
@@ -474,16 +425,19 @@ class ProfileViewModel: ObservableObject {
             }
             let profile = try JSONDecoder().decode(UserProfile.self, from: data)
             self.notifyOnCorrectAnswer = profile.notifyOnCorrectAnswer ?? false
+            self.notifyOnDM = profile.notifyOnDM ?? false // ★ 追加
         } catch {
             print("通知設定取得APIへのリクエスト中にエラー(ID: \(userId)): \(error)")
         }
         isLoadingSettings = false
     }
+
+    // (updateNotificationSetting は変更なし)
     func updateNotificationSetting(isOn: Bool) async {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return }
         guard !isLoadingSettings else { return }
         isLoadingSettings = true
-        print("通知設定を更新: \(isOn)")
+        print("通知設定(正解)を更新: \(isOn)") // ★ ログを明確化
         let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("settings")
         do {
             guard let idToken = await authViewModel.getValidIdToken() else {
@@ -495,25 +449,67 @@ class ProfileViewModel: ObservableObject {
             request.httpMethod = "PUT"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue(idToken, forHTTPHeaderField: "Authorization")
+            // ★ "notifyOnCorrectAnswer" キーで送信
             let requestBody = ["notifyOnCorrectAnswer": isOn]
             request.httpBody = try JSONEncoder().encode(requestBody)
             let (_, response) = try await URLSession.shared.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                 print("通知設定更新APIエラー: \(response)")
-                self.notifyOnCorrectAnswer = !isOn
+                self.notifyOnCorrectAnswer = !isOn // 失敗したら元に戻す
                 isLoadingSettings = false
                 return
             }
-            print("通知設定の更新に成功しました。")
+            print("通知設定(正解)の更新に成功しました。")
             isLoadingSettings = false
         } catch {
             print("通知設定更新APIリクエストエラー: \(error)")
-            self.notifyOnCorrectAnswer = !isOn
+            self.notifyOnCorrectAnswer = !isOn // 失敗したら元に戻す
             isLoadingSettings = false
         }
     }
     
-    // (deleteAccount, reportContent, fetchBlocklist, addBlock, removeBlock, isBlocked ... 変更なし)
+    // ★★★ 5. DM通知設定を更新する新しい関数を追加 ★★★
+    func updateDMNotificationSetting(isOn: Bool) async {
+        guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return }
+        guard !isLoadingSettings else { return }
+        isLoadingSettings = true
+        print("通知設定(DM)を更新: \(isOn)") // ★ ログを明確化
+        
+        let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("settings")
+        
+        do {
+            guard let idToken = await authViewModel.getValidIdToken() else {
+                print("通知設定(DM)更新: 認証トークン取得失敗")
+                isLoadingSettings = false
+                return
+            }
+            var request = URLRequest(url: url)
+            request.httpMethod = "PUT"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+            
+            // ★ "notifyOnDM" キーで送信
+            let requestBody = ["notifyOnDM": isOn]
+            request.httpBody = try JSONEncoder().encode(requestBody)
+
+            let (_, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                print("通知設定(DM)更新APIエラー: \(response)")
+                self.notifyOnDM = !isOn // 失敗したら元に戻す
+                isLoadingSettings = false
+                return
+            }
+            print("通知設定(DM)の更新に成功しました。")
+            isLoadingSettings = false
+        } catch {
+            print("通知設定(DM)更新APIリクエストエラー: \(error)")
+            self.notifyOnDM = !isOn // 失敗したら元に戻す
+            isLoadingSettings = false
+        }
+    }
+    
+    // (deleteAccount ... fetchQuestionAnalytics までの関数は変更なし)
     // ... (省略) ...
     func deleteAccount() async -> Bool {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else {
@@ -689,10 +685,6 @@ class ProfileViewModel: ObservableObject {
     func isBlocked(userId: String) -> Bool {
         return blockedUserIds.contains(userId)
     }
-
-    
-    // (fetchMyQuestions, fetchUserStats, fetchQuestionAnalytics 関数は変更なし)
-    // ... (省略) ...
     func fetchMyQuestions(authorId: String) async {
         guard !authorId.isEmpty else { return }
         isLoadingMyQuestions = true
