@@ -78,12 +78,13 @@ class ProfileViewModel: ObservableObject {
             if authViewModel.isSignedIn {
                 await fetchBookmarks()
                 await fetchBlocklist()
+                // ★★★ ログイン時に「保留中のトークン」がないか確認する処理を追加 ★★★
+                await checkAndRegisterPendingDeviceToken()
             }
         }
     }
 
     // (deleteQuestion ... registerDeviceToken までの関数は変更なし)
-    // ... (省略) ...
     func deleteQuestion(questionId: String) async -> Bool {
         guard authViewModel.isSignedIn, !isDeletingQuestion else { return false }
         isDeletingQuestion = true
@@ -216,6 +217,7 @@ class ProfileViewModel: ObservableObject {
         Task {
             await fetchBookmarks()
             await fetchBlocklist()
+            await checkAndRegisterPendingDeviceToken() // ★ サインイン時にも呼び出す
         }
     }
     func handleSignOut() {
@@ -229,13 +231,18 @@ class ProfileViewModel: ObservableObject {
         inFlightNicknameTasks = [:]
         print("ローカルの全キャッシュと進行中タスクをクリアしました。")
     }
+    
+    // ★★★ "deviceToken" (単数形) を呼び出すように修正済み ★★★
     func registerDeviceToken(deviceTokenString: String) async {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else {
             print("デバイストークン登録: 未ログインのためスキップ")
             return
         }
         print("デバイストークンをサーバーに登録開始...")
+        
+        // ★★★ "deviceToken" (単数形) になっていることを確認！ ★★★
         let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("deviceToken")
+        
         do {
             guard let idToken = await authViewModel.getValidIdToken() else {
                 print("デバイストークン登録: 認証トークン取得失敗")
@@ -247,19 +254,38 @@ class ProfileViewModel: ObservableObject {
             request.setValue(idToken, forHTTPHeaderField: "Authorization")
             let requestBody = ["deviceToken": deviceTokenString]
             request.httpBody = try JSONEncoder().encode(requestBody)
+            
             let (_, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            
+            // ★ POST/PUT の成功は 200 (OK) または 201 (Created) が一般的
+            guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
                 print("デバイストークン登録APIエラー: \(response)")
                 return
             }
             print("デバイストークン登録に成功しました。")
+            
         } catch {
             print("デバイストークン登録APIリクエストエラー: \(error)")
         }
     }
 
+    // ★★★ 新しい関数を追加 ★★★
+    /// UserDefaults に保留中のデバイストークンがあれば登録する
+    func checkAndRegisterPendingDeviceToken() async {
+        if let token = UserDefaults.standard.string(forKey: "pendingDeviceToken") {
+            print("保留中のデバイストークンが見つかりました。登録を試みます...")
+            
+            // 自分の registerDeviceToken 関数を呼び出す
+            await registerDeviceToken(deviceTokenString: token)
+            
+            // 処理が成功したかどうかにかかわらず、
+            // サーバーへの登録を「試行」したので、保留中トークンは削除する
+            UserDefaults.standard.removeObject(forKey: "pendingDeviceToken")
+            print("保留中のデバイストークンを処理しました。")
+        }
+    }
+    
     // (fetchNickname, requestNicknameFromAPI ... 変更なし)
-    // ... (省略) ...
     func fetchNickname(userId: String) async -> String {
         if let cached = userNicknames[userId] {
             print("ニックネーム(ID: \(userId))をキャッシュから取得: \(cached)")
@@ -509,8 +535,7 @@ class ProfileViewModel: ObservableObject {
         }
     }
     
-    // (deleteAccount ... fetchQuestionAnalytics までの関数は変更なし)
-    // ... (省略) ...
+    // (deleteAccount ... 変更なし)
     func deleteAccount() async -> Bool {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else {
             print("ProfileViewModel: 未ログインのためアカウント削除を実行できません。")
@@ -685,26 +710,52 @@ class ProfileViewModel: ObservableObject {
     func isBlocked(userId: String) -> Bool {
         return blockedUserIds.contains(userId)
     }
+    
+    // --- ★★★ ここが修正された関数 ★★★ ---
     func fetchMyQuestions(authorId: String) async {
         guard !authorId.isEmpty else { return }
         isLoadingMyQuestions = true
+        
+        // ★★★ 修正: 認証トークンを取得 ★★★
+        guard let idToken = await authViewModel.getValidIdToken() else {
+            print("自分の質問リスト取得: 認証トークン取得失敗")
+            self.myQuestions = []
+            isLoadingMyQuestions = false
+            return
+        }
+        
         let url = usersApiEndpoint.appendingPathComponent(authorId).appendingPathComponent("questions")
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
+            // ★★★ URLRequest を使用してトークンを送信 ★★★
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                 print("自分の質問リスト取得時にサーバーエラー: \(response)")
                 self.myQuestions = []
                 isLoadingMyQuestions = false
                 return
             }
+            
             self.myQuestions = try JSONDecoder().decode([Question].self, from: data)
-            print("自分の質問リストの取得に成功。件数: \(myQuestions.count)")
+            print("✅ 自分の質問リストの取得に成功。件数: \(myQuestions.count)")
+            
+            // ★★★ デバッグ: 各質問の shareCode を確認 ★★★
+            for (index, question) in self.myQuestions.enumerated() {
+                print("📋 Question[\(index)]: title=\(question.title), shareCode=\(question.shareCode ?? "❌NIL")")
+            }
+            
         } catch {
             print("自分の質問リストの取得またはデコードに失敗: \(error)")
             self.myQuestions = []
         }
         isLoadingMyQuestions = false
     }
+    // --- ★★★ 修正ここまで ★★★ ---
+    
     func fetchUserStats(userId: String) async {
         guard !userId.isEmpty else { return }
         isLoadingUserStats = true

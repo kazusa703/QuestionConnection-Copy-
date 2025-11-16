@@ -100,8 +100,16 @@ struct QuestionAnalyticsView: View {
         .navigationTitle("問題の分析")
         .navigationBarTitleDisplayMode(.inline)
         // ★ 統合: .onAppear と fetchAnalytics() 関数を、.task に置き換え
+        // ★★★ ここにデバッグログを追加 ★★★
         .task {
-             await viewModel.fetchQuestionAnalytics(questionId: question.questionId)
+            // ★★★ デバッグ: 受け取った Question オブジェクトの内容を確認 ★★★
+            print("📌 [QuestionAnalyticsView] Received question:")
+            print("    - questionId: \(question.questionId)")
+            print("    - title: \(question.title)")
+            print("    - shareCode: \(question.shareCode ?? "❌NIL")")
+            print("    - tags: \(question.tags)")
+            
+            await viewModel.fetchQuestionAnalytics(questionId: question.questionId)
         }
         // ★★★ 追加: 削除確認アラートの設定 ★★★
         .alert("質問の削除", isPresented: $showingDeleteAlert) {

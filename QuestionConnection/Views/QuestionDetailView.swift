@@ -20,6 +20,7 @@ struct QuestionDetailView: View {
     @State private var shouldNavigateToQuiz = false
     @State private var showCopiedToast = false
 
+    // (isBookmarked, isAuthorNotMe, isAuthorBlocked は変更なし)
     private var isBookmarked: Bool {
         profileViewModel.isBookmarked(questionId: question.id)
     }
@@ -32,10 +33,9 @@ struct QuestionDetailView: View {
         profileViewModel.isBlocked(userId: question.authorId)
     }
 
-    // --- body を2つに分割 ① (エラー回避のため) ---
+    // --- contentBody (変更なし) ---
     private var contentBody: some View {
         VStack(alignment: .leading, spacing: 20) {
-            // (既存のVStackの中身 ... 変更なし)
             Text(question.title)
                 .font(.largeTitle)
                 .fontWeight(.bold)
@@ -113,73 +113,77 @@ struct QuestionDetailView: View {
         } // End VStack
     }
     
-    // --- body を2つに分割 ② (モディファイア) ---
+    // --- body (ツールバーを修正) ---
     var body: some View {
         contentBody // ← 分割したVStackを呼び出す
             .padding()
             .navigationTitle("質問詳細")
             .navigationBarTitleDisplayMode(.inline)
-            // (ツールバー ... 変更なし)
+            
+            // --- ★★★ ツールバーを修正 ★★★ ---
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Menu {
-                        // --- 1. 通報ボタン ---
-                        Button(role: .destructive) {
-                            if authViewModel.isSignedIn {
-                                showingReportAlert = true
-                            } else {
-                                showAuthenticationSheet.wrappedValue = true
-                            }
-                        } label: {
-                            Label("この質問を通報する", systemImage: "exclamationmark.bubble")
+                    HStack(spacing: 12) {
+                        // 1. ブックマークボタン
+                        Button(action: toggleBookmark) {
+                            Image(systemName: isBookmarked ? "bookmark.fill" : "bookmark")
+                                .foregroundColor(isBookmarked ? .orange : .gray)
                         }
                         
-                        // --- 2. ブロック/ブロック解除ボタン ---
-                        if isAuthorNotMe { // 自分の質問でなければ
+                        // 2. 既存の通報・ブロックメニュー
+                        Menu {
                             Button(role: .destructive) {
-                                if isAuthorBlocked {
-                                    Task {
-                                        isProcessingAction = true
-                                        await profileViewModel.removeBlock(blockedUserId: question.authorId)
-                                        isProcessingAction = false
-                                        withAnimation { showingUnblockSuccessToast = true }
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                                            withAnimation { showingUnblockSuccessToast = false }
-                                        }
-                                    }
+                                if authViewModel.isSignedIn {
+                                    showingReportAlert = true
                                 } else {
-                                    showingBlockAlert = true
+                                    showAuthenticationSheet.wrappedValue = true
                                 }
                             } label: {
-                                if isAuthorBlocked {
-                                    Label("ブロックを解除する", systemImage: "hand.thumbsup")
-                                } else {
-                                    Label("このユーザーをブロックする", systemImage: "hand.raised.slash")
-                                }
+                                Label("この質問を通報する", systemImage: "exclamationmark.bubble")
                             }
-                            .disabled(isProcessingAction)
+                            
+                            if isAuthorNotMe { // 自分の質問でなければ
+                                Button(role: .destructive) {
+                                    if isAuthorBlocked {
+                                        Task {
+                                            isProcessingAction = true
+                                            await profileViewModel.removeBlock(blockedUserId: question.authorId)
+                                            isProcessingAction = false
+                                            withAnimation { showingUnblockSuccessToast = true }
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                                                withAnimation { showingUnblockSuccessToast = false }
+                                            }
+                                        }
+                                    } else {
+                                        showingBlockAlert = true
+                                    }
+                                } label: {
+                                    if isAuthorBlocked {
+                                        Label("ブロックを解除する", systemImage: "hand.thumbsup")
+                                    } else {
+                                        Label("このユーザーをブロックする", systemImage: "hand.raised.slash")
+                                    }
+                                }
+                                .disabled(isProcessingAction)
+                            }
+                            
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
                         }
-                        
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
                     }
                 }
             }
+            // --- ★★★ 修正ここまで ★★★ ---
             
-            // --- ★★★ .onAppear を修正 ★★★ ---
+            // (残りのモディファイアは変更なし)
             .onAppear {
-                // ★ 1. AuthViewModelを *先* にセットする
                 quizViewModel.setAuthViewModel(authViewModel)
-                
-                // ★ 2. その後に解答状況を確認する
                 if authViewModel.isSignedIn {
                     checkAnswerStatus()
                 } else {
                     hasAnswered = false
                 }
             }
-            // --- ★★★ 修正ここまで ★★★ ---
-            
             .onChange(of: authViewModel.isSignedIn) { _, isSignedIn in
                 if isSignedIn {
                     checkAnswerStatus()
@@ -277,10 +281,6 @@ struct QuestionDetailView: View {
             } message: {
                 Text("このユーザーをブロックしますか？\n（ブロックした相手からのDMが拒否されます）")
             }
-            // ★★★ .task は不要になったので削除 ★★★
-            // .task {
-            //     quizViewModel.setAuthViewModel(authViewModel)
-            // }
     } // End body
 
     
@@ -299,7 +299,6 @@ struct QuestionDetailView: View {
         }
         hasAnswered = nil
         Task {
-            // ★ .onAppear で VM がセットされた後に呼ばれる
             let result = await quizViewModel.checkIfAlreadyAnswered(questionId: question.questionId)
             hasAnswered = result
         }
@@ -319,4 +318,21 @@ struct QuestionDetailView: View {
             }
         }
     }
+    
+    // --- ★★★ 追加：ブックマークトグル関数 ★★★ ---
+    private func toggleBookmark() {
+        guard authViewModel.isSignedIn else {
+            showAuthenticationSheet.wrappedValue = true
+            return
+        }
+        
+        Task {
+            if isBookmarked {
+                await profileViewModel.removeBookmark(questionId: question.id)
+            } else {
+                await profileViewModel.addBookmark(questionId: question.id)
+            }
+        }
+    }
+    // --- ★★★ 追加完了 ★★★ ---
 }

@@ -87,6 +87,10 @@ struct SettingsView: View {
                 // ★★★ 3. onAppearで両方の設定を読み込む ★★★
                 // (fetchNotificationSettings が両方読み込むように変更済み)
                 await profileViewModel.fetchNotificationSettings()
+                
+                // --- ★★★ ここから追加 ★★★
+                checkNotificationStatus()
+                // --- ★★★ ここまで追加 ★★★
             }
         }
         // (アラート関連は変更なし)
@@ -114,6 +118,23 @@ struct SettingsView: View {
             Button("OK") { }
         } message: {
             Text(deleteErrorMessage)
+        }
+    }
+    
+    // --- ★★★ 新しいヘルパー関数を追加 ★★★
+    private func checkNotificationStatus() {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            if settings.authorizationStatus == .authorized {
+                print("✅ [SettingsView] APNs: 既に許可されています。")
+                // 許可されている場合は、念のためトークン登録を再度試みる
+                DispatchQueue.main.async {
+                     UIApplication.shared.registerForRemoteNotifications()
+                }
+            } else if settings.authorizationStatus == .denied {
+                print("❌ [SettingsView] APNs: 拒否されています。設定アプリで許可が必要です。")
+            } else {
+                print("❓ [SettingsView] APNs: まだ許可を求めていません (status: \(settings.authorizationStatus.rawValue))。")
+            }
         }
     }
 }

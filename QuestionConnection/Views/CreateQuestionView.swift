@@ -93,10 +93,15 @@ struct CreateQuestionView: View {
     @StateObject private var viewModel = QuestionViewModel()
     @EnvironmentObject private var authViewModel: AuthViewModel
     @Environment(\.showAuthenticationSheet) private var showAuthenticationSheet
-
+    
     @State private var title = ""
     @State private var purpose = "" // 目的
-    @State private var tags = ""
+    
+    // --- ★ 1. タグの @State を置き換え ---
+    @State private var tagInput: String = ""
+    @State private var tags: [String] = []
+    // --- ★ 修正完了 (1) ---
+    
     @State private var remarks = ""
     @State private var dmInviteMessage = "" // 全問正解者向けメッセージ（任意）
     @State private var quizItems: [QuizItem] = [
@@ -105,14 +110,15 @@ struct CreateQuestionView: View {
             Choice(id: UUID().uuidString, text: "")
         ], correctAnswerId: "")
     ]
-
+    
     @State private var showAlert = false
     @State private var alertMessage = ""
     
+    // (isPostButtonDisabled は変更なし)
     private var isPostButtonDisabled: Bool {
-        return viewModel.isLoading || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || purpose.isEmpty
+        return viewModel.isLoading || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
-
+    
     var body: some View {
         NavigationStack {
             Form {
@@ -126,7 +132,7 @@ struct CreateQuestionView: View {
                     VStack(alignment: .leading) {
                         Text("目的").font(.caption).foregroundColor(.secondary)
                         Picker("目的を選択", selection: $purpose) {
-                            Text("選択してください").tag("")
+                            Text("選択なし").tag("")
                             ForEach(viewModel.availablePurposes, id: \.self) { p in
                                 Text(p).tag(p)
                             }
@@ -135,13 +141,45 @@ struct CreateQuestionView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .tint(.primary)
                     }
-
+                    
+                    // --- ★ 2. タグ入力UIの変更 ---
                     VStack(alignment: .leading) {
-                        Text("タグ").font(.caption).foregroundColor(.secondary)
-                        TextField("例: ご飯,パン,麺（カンマ区切り）", text: $tags)
-                            .textFieldStyle(.roundedBorder)
+                        Text("タグ（5個まで）").font(.caption).foregroundColor(.secondary)
+                        HStack {
+                            TextField("タグを入力して「追加」", text: $tagInput)
+                                .textFieldStyle(.roundedBorder)
+                            Button("追加") {
+                                addTag()
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(tagInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || tags.count >= 5)
+                        }
+                        
+                        // 追加されたタグを表示するScrollView
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack {
+                                ForEach(tags, id: \.self) { tag in
+                                    HStack(spacing: 4) {
+                                        Text(tag)
+                                        Button {
+                                            removeTag(tag)
+                                        } label: {
+                                            Image(systemName: "xmark.circle.fill")
+                                        }
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(Color.blue.opacity(0.1))
+                                    .clipShape(Capsule())
+                                    .buttonStyle(.plain) // ボタンのスタイルをリセット
+                                }
+                            }
+                            .padding(.top, 5) // タグ入力欄との間に少し余白
+                        }
+                        .frame(minHeight: (tags.isEmpty ? 0 : 35)) // タグがない場合は高さを0に
                     }
-
+                    // --- ★ 修正完了 (2) ---
+                    
                     VStack(alignment: .leading) {
                         Text("備考・説明").font(.caption).foregroundColor(.secondary)
                         ZStack(alignment: .topLeading) {
@@ -154,7 +192,7 @@ struct CreateQuestionView: View {
                         }
                         .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color(UIColor.systemGray4), lineWidth: 1))
                     }
-
+                    
                     // ここが追加の入力欄
                     VStack(alignment: .leading) {
                         Text("全問正解者へのメッセージ（任意）").font(.caption).foregroundColor(.secondary)
@@ -170,7 +208,7 @@ struct CreateQuestionView: View {
                         .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color(UIColor.systemGray4), lineWidth: 1))
                     }
                 }
-
+                
                 ForEach($quizItems.indices, id: \.self) { index in
                     QuizItemFormView(
                         quizItem: $quizItems[index],
@@ -179,7 +217,7 @@ struct CreateQuestionView: View {
                         canBeDeleted: quizItems.count > 1
                     )
                 }
-
+                
                 HStack {
                     if quizItems.count < 5 {
                         Button("問題を追加") { addQuizItem() }
@@ -187,7 +225,7 @@ struct CreateQuestionView: View {
                     }
                     Spacer()
                 }
-
+                
                 Section {
                     Button {
                         if authViewModel.isSignedIn {
@@ -220,20 +258,39 @@ struct CreateQuestionView: View {
             }
         }
     }
-
+    
     private func addQuizItem() {
         quizItems.append(QuizItem(id: UUID().uuidString, questionText: "", choices: [
             Choice(id: UUID().uuidString, text: ""),
             Choice(id: UUID().uuidString, text: "")
         ], correctAnswerId: ""))
     }
-
+    
     private func deleteQuizItem(at index: Int) {
         guard quizItems.count > 1 else { return }
         guard index < quizItems.count else { return }
         quizItems.remove(at: index)
     }
-
+    
+    // --- ★ 3. 提案されたヘルパー関数を追加 ---
+    // タグ追加処理
+    private func addTag() {
+        let trimmedTag = tagInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        // タグの上限（5個まで）
+        guard !trimmedTag.isEmpty, !tags.contains(trimmedTag), tags.count < 5 else {
+            tagInput = "" // 上限の場合も入力欄はクリア
+            return
+        }
+        tags.append(trimmedTag)
+        tagInput = ""
+    }
+    
+    // タグ削除処理
+    private func removeTag(_ tag: String) {
+        tags.removeAll { $0 == tag }
+    }
+    // --- ★ 修正完了 (3) ---
+    
     private func postQuestion() {
         guard let authorId = authViewModel.userSub else {
             alertMessage = "ユーザー情報が見つかりません。再ログインしてください。"
@@ -246,11 +303,9 @@ struct CreateQuestionView: View {
             showAlert = true
             return
         }
-        if purpose.isEmpty {
-            alertMessage = "目的を選択してください。"
-            showAlert = true
-            return
-        }
+        
+        // (目的のバリデーション削除は反映済み)
+        
         for (index, item) in quizItems.enumerated() {
             if item.questionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 alertMessage = "問題 \(index + 1) の問題文が空です。"
@@ -275,40 +330,45 @@ struct CreateQuestionView: View {
                 }
             }
         }
-
-        let tagsArray = tags.split(separator: ",")
-                          .map { String($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                          .filter { !$0.isEmpty }
-
+        
+        // --- ★ 4. tagsArray の作成ロジックを削除 (変更済み) ---
+        
         Task {
             let success = await viewModel.createQuestion(
                 title: title.trimmingCharacters(in: .whitespacesAndNewlines),
-                tags: tagsArray,
+                // ★ 5. @State の `tags` をそのまま渡す ★
+                tags: tags,
                 remarks: remarks.trimmingCharacters(in: .whitespacesAndNewlines),
                 authorId: authorId,
                 quizItems: quizItems,
-                purpose: purpose,
+                purpose: purpose, // そのまま渡す (空文字列 or 値)
                 dmInviteMessage: dmInviteMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : dmInviteMessage
             )
-
-            if success {
-                alertMessage = "質問を投稿しました！"
-                // フォームをリセット
-                title = ""
-                purpose = ""
-                tags = ""
-                remarks = ""
-                dmInviteMessage = ""
-                quizItems = [QuizItem(
-                    id: UUID().uuidString,
-                    questionText: "",
-                    choices: [Choice(id: UUID().uuidString, text: ""), Choice(id: UUID().uuidString, text: "")],
-                    correctAnswerId: ""
-                )]
-            } else {
-                alertMessage = "投稿に失敗しました。しばらくしてからもう一度お試しください。"
+            
+            // --- ★★★ ここから修正 ★★★ ---
+            // UIの更新を MainActor (メインスレッド) で実行する
+            await MainActor.run {
+                if success {
+                    alertMessage = "質問を投稿しました！"
+                    // フォームをリセット
+                    title = ""
+                    purpose = ""
+                    tags = []
+                    tagInput = ""
+                    remarks = ""
+                    dmInviteMessage = ""
+                    quizItems = [QuizItem(
+                        id: UUID().uuidString,
+                        questionText: "",
+                        choices: [Choice(id: UUID().uuidString, text: ""), Choice(id: UUID().uuidString, text: "")],
+                        correctAnswerId: ""
+                    )]
+                } else {
+                    alertMessage = "投稿に失敗しました。しばらくしてからもう一度お試しください。"
+                }
+                showAlert = true
             }
-            showAlert = true
+            // --- ★★★ 修正ここまで ★★★ ---
         }
     }
 }
