@@ -14,7 +14,6 @@ struct DMListView: View {
 
     @State private var favoriteThreadIds: Set<String> = []
     
-    // ★★★ 修正：削除されたスレッド + 削除時刻を記録 ★★★
     @State private var deletedThreads: [String: Date] = [:]
 
     enum DMTab {
@@ -31,32 +30,20 @@ struct DMListView: View {
             return !profileViewModel.isBlocked(userId: opponentId)
         }
         
-        // ★★★ 修正：削除フィルタをより柔軟に ★★★
-               let nonDeleted = nonBlocked.filter { thread in
-                   // 削除されていない場合は表示
-                   guard let deletedAt = deletedThreads[thread.threadId] else {
-                       return true
-                   }
-                   
-                   // 削除されている場合：削除時刻より後のメッセージがあれば再表示
-                   if let threadUpdatedDate = parseDate(thread.lastUpdated),
-                      threadUpdatedDate > deletedAt {
-                       // 削除後に新しいメッセージが来たので再表示
-                       print("✅ スレッド '\(thread.threadId)' は削除後に新しいメッセージがあるため再表示します（更新時刻: \(threadUpdatedDate)、削除時刻: \(deletedAt)）")
-                       return true
-                   }
-                   
-                   // ★★★ 追加：最後のメッセージが自分が送ったものならば再表示 ★★★
-                   if let lastMessage = dmViewModel.messages.last,
-                      let myUserId = authViewModel.userSub,
-                      lastMessage.senderId == myUserId {
-                       // 自分が送ったメッセージがあれば再表示
-                       print("✅ スレッド '\(thread.threadId)' は自分が新しいメッセージを送ったため再表示します")
-                       return true
-                   }
-                   
-                   return false
-               }
+        let nonDeleted = nonBlocked.filter { thread in
+            guard let deletedAt = deletedThreads[thread.threadId] else {
+                return true
+            }
+            
+            if let threadUpdatedDate = parseDate(thread.lastUpdated),
+               threadUpdatedDate > deletedAt {
+                print("✅ スレッド '\(thread.threadId)' は削除後に新しいメッセージがあるため再表示します（更新時刻: \(threadUpdatedDate)、削除時刻: \(deletedAt)）")
+                return true
+            }
+            
+            return false
+        }
+
         guard !searchText.isEmpty else {
             return applyTabFilter(nonDeleted, myUserId: myUserId)
         }
@@ -166,12 +153,6 @@ struct DMListView: View {
                 await fetchThreadsAsync()
             }
         }
-        // ★★★ 追加：画面が表示される度にスレッド一覧を更新 ★★★
-               .onReceive(Timer.publish(every: 3.0, on: .main, in: .common).autoconnect()) { _ in
-                   if authViewModel.isSignedIn {
-                       fetchThreads()
-                   }
-               }
         .onChange(of: authViewModel.isSignedIn) { _, isSignedIn in
             if isSignedIn {
                 dmViewModel.setAuthViewModel(authViewModel)
@@ -221,6 +202,7 @@ struct DMListView: View {
                             .environmentObject(authViewModel)
                             .environmentObject(profileViewModel)
                     ) {
+                        // ★★★ 修正：名前だけを表示 ★★★
                         DMListRowView(
                             thread: thread,
                             profileViewModel: profileViewModel,
@@ -314,7 +296,6 @@ struct DMListView: View {
         saveFavorites()
     }
 
-    // ★★★ 修正：削除時刻を記録 ★★★
     private func deleteThread(threadId: String) {
         deletedThreads[threadId] = Date()
         saveDeletedThreads()
@@ -340,7 +321,6 @@ struct DMListView: View {
         favoriteThreadIds = Set(saved)
     }
     
-    // ★★★ 修正：削除時刻も一緒に保存・読み込み ★★★
     private func saveDeletedThreads() {
         guard let userId = authViewModel.userSub else { return }
         let userDeletedKey = "deleted_threads_\(userId)"
