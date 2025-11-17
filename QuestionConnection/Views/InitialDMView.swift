@@ -28,6 +28,34 @@ struct InitialDMView: View {
 
     var body: some View {
         VStack(spacing: 15) {
+            // ★★★ 追加：全問正解した質問タイトルを表示 ★★★
+            VStack(alignment: .center, spacing: 8) {
+                HStack {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(.green)
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("全問正解しました！")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        
+                        Text(questionTitle)
+                            .font(.headline)
+                            .fontWeight(.bold)
+                            .lineLimit(2)
+                            .truncationMode(.tail)
+                    }
+                    
+                    Spacer()
+                }
+                .padding(12)
+                .background(Color.green.opacity(0.1))
+                .cornerRadius(8)
+                .border(Color.green.opacity(0.3), width: 1)
+            }
+            .padding(.bottom, 8)
+            
             Text("\(recipientNickname) さんへのメッセージ")
                 .font(.headline)
 
@@ -68,7 +96,6 @@ struct InitialDMView: View {
             Text(alertMessage)
         }
         .navigationDestination(item: $navigateToThread) { thread in
-            // 送信直後は同じ VM を会話画面に共有
             ConversationView(thread: thread, viewModel: viewModel)
                 .environmentObject(authViewModel)
                 .environmentObject(profileViewModel)

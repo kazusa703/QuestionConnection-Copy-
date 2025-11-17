@@ -30,7 +30,7 @@ private struct MessageRowView: View {
 }
 
 private struct MessageListView: View {
-    let messages: [Message]   // Message は id, senderId, text を持つ前提
+    let messages: [Message]
     let myUserId: String?
 
     var body: some View {
@@ -76,6 +76,10 @@ struct ConversationView: View {
     @State private var isProcessingAction = false
     @State private var showingSendErrorAlert = false
     @State private var sendErrorMessage = ""
+    
+    // ★★★ 修正：質問タイトルを直接保持 ★★★
+    @State private var lastCompletedQuestionTitle: String = ""
+    @State private var showQuestionTitle = false
 
     private var opponentId: String? {
         guard let myUserId = authViewModel.userSub else { return nil }
@@ -87,9 +91,14 @@ struct ConversationView: View {
         return profileViewModel.isBlocked(userId: opponentId)
     }
 
+    // ★★★ 修正：表示するタイトル ★★★
     private var navigationTitleNickname: String {
-        if let nick = recipientNickname { return nick.isEmpty ? "(未設定)" : nick }
-        return "読み込み中..."
+        if showQuestionTitle && !lastCompletedQuestionTitle.isEmpty {
+            return lastCompletedQuestionTitle
+        } else {
+            if let nick = recipientNickname { return nick.isEmpty ? "(未設定)" : nick }
+            return "読み込み中..."
+        }
     }
 
     private var toolbarMenuButton: some View {
@@ -126,7 +135,35 @@ struct ConversationView: View {
         }
         .navigationTitle(navigationTitleNickname)
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(false)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                Button(action: {
+                    if !lastCompletedQuestionTitle.isEmpty {
+                        withAnimation {
+                            showQuestionTitle.toggle()
+                        }
+                    }
+                }) {
+                    VStack(spacing: 2) {
+                        Text(navigationTitleNickname)
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        
+                        if !lastCompletedQuestionTitle.isEmpty {
+                            if showQuestionTitle {
+                                Text("タップで相手名に戻す")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            } else {
+                                Text("タップで最後に正解した質問を表示")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
             ToolbarItem(placement: .navigationBarTrailing) { toolbarMenuButton }
         }
         .overlay(alignment: .top) {
@@ -169,7 +206,6 @@ struct ConversationView: View {
             viewModel.setAuthViewModel(authViewModel)
             await viewModel.fetchMessages(threadId: thread.threadId)
             
-            // ★★★ 【重要】ここで確実に既読をマーク ★★★
             if let myUserId = authViewModel.userSub {
                 print("✅ [ConversationView] スレッド開封：threadId=\(thread.threadId)")
                 ThreadReadTracker.shared.markSeen(userId: myUserId, threadId: thread.threadId, date: Date())
@@ -178,6 +214,10 @@ struct ConversationView: View {
             if let opponentId = opponentId {
                 self.recipientNickname = await profileViewModel.fetchNickname(userId: opponentId)
             }
+            
+            // ★★★ 修正：質問タイトルを直接設定 ★★★
+            self.lastCompletedQuestionTitle = thread.questionTitle
+            print("✅ 最後に正解した質問を設定：\(thread.questionTitle)")
         }
     }
 
@@ -195,33 +235,32 @@ struct ConversationView: View {
     }
 
     private func sendMessage() {
-            guard let senderId = authViewModel.userSub,
-                  let recipientId = opponentId else {
-                print("送信者または受信者のIDが見つかりません。")
-                return
-            }
-            let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return }
+        guard let senderId = authViewModel.userSub,
+              let recipientId = opponentId else {
+            print("送信者または受信者のIDが見つかりません。")
+            return
+        }
+        let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
 
-            Task {
-                let success = await viewModel.sendMessage(
-                    recipientId: recipientId,
-                    senderId: senderId,
-                    questionTitle: thread.questionTitle,
-                    messageText: text
-                )
-                if success {
-                    messageText = ""
-                    await viewModel.fetchMessages(threadId: thread.threadId)
-                    
-                    // ★★★ 追加：親画面（DMListView）が自動更新されるように少し待つ ★★★
-                    try? await Task.sleep(nanoseconds: 500_000_000) // 0.5秒待機
-                    
-                    print("✅ メッセージ送信完了")
-                } else {
-                    sendErrorMessage = "メッセージの送信に失敗しました。\n相手からブロックされているか、ネットワークに問題がある可能性があります。"
-                    showingSendErrorAlert = true
-                }
+        Task {
+            let success = await viewModel.sendMessage(
+                recipientId: recipientId,
+                senderId: senderId,
+                questionTitle: thread.questionTitle,
+                messageText: text
+            )
+            if success {
+                messageText = ""
+                await viewModel.fetchMessages(threadId: thread.threadId)
+                
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                
+                print("✅ メッセージ送信完了")
+            } else {
+                sendErrorMessage = "メッセージの送信に失敗しました。\n相手からブロックされているか、ネットワークに問題がある可能性があります。"
+                showingSendErrorAlert = true
             }
         }
+    }
 }
