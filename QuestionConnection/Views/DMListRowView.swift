@@ -1,23 +1,12 @@
 import SwiftUI
 
-/// DMスレッド一覧 1 行分
-/// - 役割: 相手ユーザーのニックネーム表示 / 質問タイトル表示 / 未読インジケータ表示
-/// - ニックネーム取得戦略:
-///    1) キャッシュ (profileViewModel.userNicknames)
-///    2) キャッシュ未取得なら .task で一度だけ fetchNickname
-///    3) 取得結果が空文字 -> 「（未設定）」
-///    4) 取得失敗（fetchNickname が "" を返し続ける想定） -> 「(削除されたユーザー)」
-///       （失敗直後は一時的に "読み込み中..." → 2回目以降で空文字なら未設定、それでも表示されない場合は削除扱い など
-///        ここでは簡易に空文字=未設定、nilで試行後も永続的に取得されないケース=削除扱いとする）
-///
-///  fetchNickname は ProfileViewModel 側で
-///   - in-flight Task 共有
-///   - 失敗クールダウン
-/// を実装している前提。
 struct DMListRowView: View {
     let thread: Thread
     @ObservedObject var profileViewModel: ProfileViewModel
     @EnvironmentObject private var authViewModel: AuthViewModel
+    
+    // ★★★ 修正：親からお気に入り状態を受け取る ★★★
+    let isFavorite: Bool
 
     // MARK: - 相手ユーザーID
     private var opponentId: String? {
@@ -32,15 +21,13 @@ struct DMListRowView: View {
         // キャッシュ参照
         if let cached = profileViewModel.userNicknames[opponentId] {
             if cached.isEmpty {
+                // ★★★ 修正：「（未設定）」に統一 ★★★
                 return "（未設定）"
             } else {
                 return cached
             }
         }
 
-        // キャッシュ未取得
-        // → 初回: 読み込み中表示（.task で取得開始）
-        // 取得に失敗しても fetchNickname が空文字をキャッシュする実装なら上で（未設定）になる
         return "読み込み中..."
     }
 
@@ -56,6 +43,13 @@ struct DMListRowView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
+            // ★★★ お気に入り★アイコン ★★★
+            if isFavorite {
+                Image(systemName: "star.fill")
+                    .foregroundColor(.orange)
+                    .font(.system(size: 12))
+            }
+
             VStack(alignment: .leading, spacing: 4) {
                 Text(opponentNicknameDisplay)
                     .foregroundColor(nicknameColor)

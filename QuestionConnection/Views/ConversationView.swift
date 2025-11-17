@@ -168,6 +168,13 @@ struct ConversationView: View {
         .task {
             viewModel.setAuthViewModel(authViewModel)
             await viewModel.fetchMessages(threadId: thread.threadId)
+            
+            // ★★★ 【重要】ここで確実に既読をマーク ★★★
+            if let myUserId = authViewModel.userSub {
+                print("✅ [ConversationView] スレッド開封：threadId=\(thread.threadId)")
+                ThreadReadTracker.shared.markSeen(userId: myUserId, threadId: thread.threadId, date: Date())
+            }
+            
             if let opponentId = opponentId {
                 self.recipientNickname = await profileViewModel.fetchNickname(userId: opponentId)
             }
