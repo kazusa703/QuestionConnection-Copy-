@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 struct DMListView: View {
     @StateObject private var dmViewModel = DMViewModel()
@@ -12,6 +13,9 @@ struct DMListView: View {
     @State private var selectedTab: DMTab = .all
 
     @State private var favoriteThreadIds: Set<String> = []
+    
+    // ★★★ 修正：削除されたスレッド + 削除時刻を記録 ★★★
+    @State private var deletedThreads: [String: Date] = [:]
 
     enum DMTab {
         case all
@@ -26,12 +30,38 @@ struct DMListView: View {
             let opponentId = thread.participants.first(where: { $0 != myUserId }) ?? ""
             return !profileViewModel.isBlocked(userId: opponentId)
         }
-
+        
+        // ★★★ 修正：削除フィルタをより柔軟に ★★★
+               let nonDeleted = nonBlocked.filter { thread in
+                   // 削除されていない場合は表示
+                   guard let deletedAt = deletedThreads[thread.threadId] else {
+                       return true
+                   }
+                   
+                   // 削除されている場合：削除時刻より後のメッセージがあれば再表示
+                   if let threadUpdatedDate = parseDate(thread.lastUpdated),
+                      threadUpdatedDate > deletedAt {
+                       // 削除後に新しいメッセージが来たので再表示
+                       print("✅ スレッド '\(thread.threadId)' は削除後に新しいメッセージがあるため再表示します（更新時刻: \(threadUpdatedDate)、削除時刻: \(deletedAt)）")
+                       return true
+                   }
+                   
+                   // ★★★ 追加：最後のメッセージが自分が送ったものならば再表示 ★★★
+                   if let lastMessage = dmViewModel.messages.last,
+                      let myUserId = authViewModel.userSub,
+                      lastMessage.senderId == myUserId {
+                       // 自分が送ったメッセージがあれば再表示
+                       print("✅ スレッド '\(thread.threadId)' は自分が新しいメッセージを送ったため再表示します")
+                       return true
+                   }
+                   
+                   return false
+               }
         guard !searchText.isEmpty else {
-            return applyTabFilter(nonBlocked, myUserId: myUserId)
+            return applyTabFilter(nonDeleted, myUserId: myUserId)
         }
 
-        let searched = nonBlocked.filter { thread in
+        let searched = nonDeleted.filter { thread in
             if thread.questionTitle.localizedCaseInsensitiveContains(searchText) {
                 return true
             }
@@ -44,6 +74,16 @@ struct DMListView: View {
         }
 
         return applyTabFilter(searched, myUserId: myUserId)
+    }
+
+    private func parseDate(_ isoString: String) -> Date? {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f.date(from: isoString) { return d }
+        
+        let f2 = ISO8601DateFormatter()
+        f2.formatOptions = [.withInternetDateTime]
+        return f2.date(from: isoString)
     }
 
     private func applyTabFilter(_ threads: [Thread], myUserId: String) -> [Thread] {
@@ -69,7 +109,6 @@ struct DMListView: View {
         NavigationStack {
             if authViewModel.isSignedIn {
                 VStack {
-                    // タブボタン
                     HStack {
                         Button(action: { selectedTab = .all }) {
                             Text("すべてのメッセージ")
@@ -118,6 +157,7 @@ struct DMListView: View {
                 fetchThreads()
                 isInitialFetchDone = true
                 loadFavorites()
+                loadDeletedThreads()
             }
         }
         .refreshable {
@@ -126,21 +166,28 @@ struct DMListView: View {
                 await fetchThreadsAsync()
             }
         }
+        // ★★★ 追加：画面が表示される度にスレッド一覧を更新 ★★★
+               .onReceive(Timer.publish(every: 3.0, on: .main, in: .common).autoconnect()) { _ in
+                   if authViewModel.isSignedIn {
+                       fetchThreads()
+                   }
+               }
         .onChange(of: authViewModel.isSignedIn) { _, isSignedIn in
             if isSignedIn {
                 dmViewModel.setAuthViewModel(authViewModel)
                 fetchThreads()
                 loadFavorites()
+                loadDeletedThreads()
             } else {
                 dmViewModel.threads = []
                 profileViewModel.userNicknames = [:]
                 isInitialFetchDone = false
                 favoriteThreadIds = []
+                deletedThreads = [:]
             }
         }
     }
 
-    // ★★★ 修正箇所1：ロジックを View の外（計算プロパティ）に移動 ★★★
     private var emptyListMessage: String {
         if !searchText.isEmpty {
             return "「\(searchText)」に一致するDMはありません。"
@@ -162,7 +209,6 @@ struct DMListView: View {
             } else if dmViewModel.threads.isEmpty {
                 Text("DMがありません。")
                     .foregroundColor(.secondary)
-            // ★★★ 修正箇所2： `else if` 内のロジックを `emptyListMessage` 呼び出しに置き換え ★★★
             } else if filteredThreads.isEmpty {
                 Text(emptyListMessage)
                     .foregroundColor(.secondary)
@@ -192,13 +238,24 @@ struct DMListView: View {
                                 Label("お気に入りに移動", systemImage: "star")
                             }
                         }
+                        
+                        Button(role: .destructive, action: {
+                            deleteThread(threadId: thread.threadId)
+                        }) {
+                            Label("この会話を削除", systemImage: "trash")
+                        }
+                        
+                        Button(action: {
+                            markAsUnread(threadId: thread.threadId)
+                        }) {
+                            Label("未読に戻す", systemImage: "envelope.badge")
+                        }
                     }
                 }
                 .listStyle(.plain)
             }
         }
     }
-    // ★★★ 修正ここまで ★★★
 
     private var guestView: some View {
         VStack(spacing: 20) {
@@ -257,11 +314,23 @@ struct DMListView: View {
         saveFavorites()
     }
 
+    // ★★★ 修正：削除時刻を記録 ★★★
+    private func deleteThread(threadId: String) {
+        deletedThreads[threadId] = Date()
+        saveDeletedThreads()
+        print("✅ スレッド '\(threadId)' を削除しました（削除時刻: \(Date())）")
+    }
+    
+    private func markAsUnread(threadId: String) {
+        guard let userId = authViewModel.userSub else { return }
+        ThreadReadTracker.shared.markAsUnread(userId: userId, threadId: threadId)
+        print("✅ スレッド '\(threadId)' を未読に戻しました")
+    }
+
     private func saveFavorites() {
         guard let userId = authViewModel.userSub else { return }
         let userFavoritesKey = "favorites_\(userId)"
         UserDefaults.standard.set(Array(favoriteThreadIds), forKey: userFavoritesKey)
-        print("✅ お気に入りを保存: \(favoriteThreadIds.count)件")
     }
 
     private func loadFavorites() {
@@ -269,6 +338,23 @@ struct DMListView: View {
         let userFavoritesKey = "favorites_\(userId)"
         let saved = UserDefaults.standard.array(forKey: userFavoritesKey) as? [String] ?? []
         favoriteThreadIds = Set(saved)
-        print("✅ お気に入りを読み込み: \(favoriteThreadIds.count)件")
+    }
+    
+    // ★★★ 修正：削除時刻も一緒に保存・読み込み ★★★
+    private func saveDeletedThreads() {
+        guard let userId = authViewModel.userSub else { return }
+        let userDeletedKey = "deleted_threads_\(userId)"
+        let encoded = deletedThreads.mapValues { $0.timeIntervalSince1970 }
+        UserDefaults.standard.set(encoded, forKey: userDeletedKey)
+        print("✅ 削除されたスレッドを保存: \(deletedThreads.count)件")
+    }
+    
+    private func loadDeletedThreads() {
+        guard let userId = authViewModel.userSub else { return }
+        let userDeletedKey = "deleted_threads_\(userId)"
+        if let encoded = UserDefaults.standard.dictionary(forKey: userDeletedKey) as? [String: Double] {
+            deletedThreads = encoded.mapValues { Date(timeIntervalSince1970: $0) }
+        }
+        print("✅ 削除されたスレッドを読み込み: \(deletedThreads.count)件")
     }
 }

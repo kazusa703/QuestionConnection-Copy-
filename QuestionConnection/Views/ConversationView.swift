@@ -195,28 +195,33 @@ struct ConversationView: View {
     }
 
     private func sendMessage() {
-        guard let senderId = authViewModel.userSub,
-              let recipientId = opponentId else {
-            print("送信者または受信者のIDが見つかりません。")
-            return
-        }
-        let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+            guard let senderId = authViewModel.userSub,
+                  let recipientId = opponentId else {
+                print("送信者または受信者のIDが見つかりません。")
+                return
+            }
+            let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return }
 
-        Task {
-            let success = await viewModel.sendMessage(
-                recipientId: recipientId,
-                senderId: senderId,
-                questionTitle: thread.questionTitle,
-                messageText: text
-            )
-            if success {
-                messageText = ""
-                await viewModel.fetchMessages(threadId: thread.threadId)
-            } else {
-                sendErrorMessage = "メッセージの送信に失敗しました。\n相手からブロックされているか、ネットワークに問題がある可能性があります。"
-                showingSendErrorAlert = true
+            Task {
+                let success = await viewModel.sendMessage(
+                    recipientId: recipientId,
+                    senderId: senderId,
+                    questionTitle: thread.questionTitle,
+                    messageText: text
+                )
+                if success {
+                    messageText = ""
+                    await viewModel.fetchMessages(threadId: thread.threadId)
+                    
+                    // ★★★ 追加：親画面（DMListView）が自動更新されるように少し待つ ★★★
+                    try? await Task.sleep(nanoseconds: 500_000_000) // 0.5秒待機
+                    
+                    print("✅ メッセージ送信完了")
+                } else {
+                    sendErrorMessage = "メッセージの送信に失敗しました。\n相手からブロックされているか、ネットワークに問題がある可能性があります。"
+                    showingSendErrorAlert = true
+                }
             }
         }
-    }
 }

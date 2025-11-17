@@ -18,6 +18,12 @@ final class ThreadReadTracker {
         return defaults.object(forKey: key(userId: userId, threadId: threadId)) as? Date
     }
 
+    // ★★★ 追加：未読に戻す ★★★
+    func markAsUnread(userId: String, threadId: String) {
+        // 既読時刻を削除することで、lastSeen が nil になり、未読判定が true になる
+        defaults.removeObject(forKey: key(userId: userId, threadId: threadId))
+    }
+
     // APIから返る lastUpdated(String) を Date に変換（ISO8601想定）
     private func parse(_ isoString: String) -> Date? {
         // ISO8601の一般的なケースをカバー

@@ -80,7 +80,7 @@ struct QuestionDetailView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 15) {
-                    Text("作成者からの備考・説明").font(.headline)
+                    Text("備考・説明").font(.headline)
                     Text(question.remarks.isEmpty ? "（備考はありません）" : question.remarks)
                         .foregroundColor(question.remarks.isEmpty ? .secondary : .primary)
                 }
