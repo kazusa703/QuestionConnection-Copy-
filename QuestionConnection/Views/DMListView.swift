@@ -37,7 +37,8 @@ struct DMListView: View {
             
             if let threadUpdatedDate = parseDate(thread.lastUpdated),
                threadUpdatedDate > deletedAt {
-                print("✅ スレッド '\(thread.threadId)' は削除後に新しいメッセージがあるため再表示します（更新時刻: \(threadUpdatedDate)、削除時刻: \(deletedAt)）")
+                // ★★★ 修正：不要なログを削除（コスト削減） ★★★
+                // print("✅ スレッド '\(thread.threadId)' は削除後に新しいメッセージがあるため再表示します（更新時刻: \(threadUpdatedDate)、削除時刻: \(deletedAt)）")
                 return true
             }
             
@@ -299,13 +300,15 @@ struct DMListView: View {
     private func deleteThread(threadId: String) {
         deletedThreads[threadId] = Date()
         saveDeletedThreads()
-        print("✅ スレッド '\(threadId)' を削除しました（削除時刻: \(Date())）")
+        // ★★★ 修正：削除操作の詳細ログを削除（コスト削減） ★★★
+        // print("✅ スレッド '\(threadId)' を削除しました（削除時刻: \(Date())）")
     }
     
     private func markAsUnread(threadId: String) {
         guard let userId = authViewModel.userSub else { return }
         ThreadReadTracker.shared.markAsUnread(userId: userId, threadId: threadId)
-        print("✅ スレッド '\(threadId)' を未読に戻しました")
+        // ★★★ 修正：未読戻す操作の詳細ログを削除（コスト削減） ★★★
+        // print("✅ スレッド '\(threadId)' を未読に戻しました")
     }
 
     private func saveFavorites() {
@@ -326,7 +329,8 @@ struct DMListView: View {
         let userDeletedKey = "deleted_threads_\(userId)"
         let encoded = deletedThreads.mapValues { $0.timeIntervalSince1970 }
         UserDefaults.standard.set(encoded, forKey: userDeletedKey)
-        print("✅ 削除されたスレッドを保存: \(deletedThreads.count)件")
+        // ★★★ 修正：削除スレッド保存の詳細ログを削除（コスト削減） ★★★
+        // print("✅ 削除されたスレッドを保存: \(deletedThreads.count)件")
     }
     
     private func loadDeletedThreads() {
@@ -335,6 +339,7 @@ struct DMListView: View {
         if let encoded = UserDefaults.standard.dictionary(forKey: userDeletedKey) as? [String: Double] {
             deletedThreads = encoded.mapValues { Date(timeIntervalSince1970: $0) }
         }
-        print("✅ 削除されたスレッドを読み込み: \(deletedThreads.count)件")
+        // ★★★ 修正：削除スレッド読み込みの詳細ログを削除（コスト削減） ★★★
+        // print("✅ 削除されたスレッドを読み込み: \(deletedThreads.count)件")
     }
 }
