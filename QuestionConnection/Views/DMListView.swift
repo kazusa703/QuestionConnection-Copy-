@@ -15,6 +15,9 @@ struct DMListView: View {
     @State private var favoriteThreadIds: Set<String> = []
     
     @State private var deletedThreads: [String: Date] = [:]
+    
+    // ★★★ 追加：最後のメッセージとその日付をキャッシュ ★★★
+    @State private var lastMessageCache: [String: (text: String, date: Date)] = [:]
 
     enum DMTab {
         case all
@@ -37,8 +40,6 @@ struct DMListView: View {
             
             if let threadUpdatedDate = parseDate(thread.lastUpdated),
                threadUpdatedDate > deletedAt {
-                // ★★★ 修正：不要なログを削除（コスト削減） ★★★
-                // print("✅ スレッド '\(thread.threadId)' は削除後に新しいメッセージがあるため再表示します（更新時刻: \(threadUpdatedDate)、削除時刻: \(deletedAt)）")
                 return true
             }
             
@@ -151,6 +152,8 @@ struct DMListView: View {
         .refreshable {
             if authViewModel.isSignedIn {
                 profileViewModel.userNicknames = [:]
+                profileViewModel.userProfileImages = [:]
+                lastMessageCache = [:]
                 await fetchThreadsAsync()
             }
         }
@@ -163,9 +166,11 @@ struct DMListView: View {
             } else {
                 dmViewModel.threads = []
                 profileViewModel.userNicknames = [:]
+                profileViewModel.userProfileImages = [:]
                 isInitialFetchDone = false
                 favoriteThreadIds = []
                 deletedThreads = [:]
+                lastMessageCache = [:]
             }
         }
     }
@@ -203,11 +208,12 @@ struct DMListView: View {
                             .environmentObject(authViewModel)
                             .environmentObject(profileViewModel)
                     ) {
-                        // ★★★ 修正：名前だけを表示 ★★★
                         DMListRowView(
                             thread: thread,
                             profileViewModel: profileViewModel,
-                            isFavorite: favoriteThreadIds.contains(thread.threadId)
+                            isFavorite: favoriteThreadIds.contains(thread.threadId),
+                            lastMessage: lastMessageCache[thread.threadId]?.text,
+                            lastMessageDate: lastMessageCache[thread.threadId]?.date
                         )
                         .environmentObject(authViewModel)
                     }
@@ -236,6 +242,11 @@ struct DMListView: View {
                     }
                 }
                 .listStyle(.plain)
+                .onAppear {
+                    Task {
+                        await fetchLastMessagesForThreads(filteredThreads)
+                    }
+                }
             }
         }
     }
@@ -261,6 +272,7 @@ struct DMListView: View {
             await dmViewModel.fetchThreads(userId: userId)
             if !dmViewModel.threads.isEmpty {
                 await fetchAllNicknames(for: dmViewModel.threads)
+                await fetchLastMessagesForThreads(dmViewModel.threads)
             }
         }
     }
@@ -270,9 +282,11 @@ struct DMListView: View {
         await dmViewModel.fetchThreads(userId: userId)
         if !dmViewModel.threads.isEmpty {
             await fetchAllNicknames(for: dmViewModel.threads)
+            await fetchLastMessagesForThreads(dmViewModel.threads)
         }
     }
 
+    // ★★★ 修正：常に fetchNicknameAndImage を呼ぶ（キャッシュがあれば使用） ★★★
     private func fetchAllNicknames(for threads: [Thread]) async {
         guard let myUserId = authViewModel.userSub else { return }
         let opponentIds = Set(
@@ -280,10 +294,25 @@ struct DMListView: View {
                    .filter { $0 != myUserId }
         )
         for opponentId in opponentIds {
-            if profileViewModel.userNicknames[opponentId] == nil {
-                Task {
-                    _ = await profileViewModel.fetchNickname(userId: opponentId)
-                }
+            // ★★★ 修正：常に fetchNicknameAndImage を呼ぶ（キャッシュがあれば使用）★★★
+            _ = await profileViewModel.fetchNicknameAndImage(userId: opponentId)
+        }
+    }
+    
+    private func fetchLastMessagesForThreads(_ threads: [Thread]) async {
+        for thread in threads {
+            let tempViewModel = DMViewModel()
+            tempViewModel.setAuthViewModel(authViewModel)
+            await tempViewModel.fetchMessages(threadId: thread.threadId)
+            
+            if let lastMessage = tempViewModel.messages.last {
+                let messageText = lastMessage.text.count > 50
+                    ? String(lastMessage.text.prefix(50)) + "..."
+                    : lastMessage.text
+                
+                let messageDate = parseDate(lastMessage.timestamp) ?? Date()
+                
+                lastMessageCache[thread.threadId] = (text: messageText, date: messageDate)
             }
         }
     }
@@ -300,15 +329,11 @@ struct DMListView: View {
     private func deleteThread(threadId: String) {
         deletedThreads[threadId] = Date()
         saveDeletedThreads()
-        // ★★★ 修正：削除操作の詳細ログを削除（コスト削減） ★★★
-        // print("✅ スレッド '\(threadId)' を削除しました（削除時刻: \(Date())）")
     }
     
     private func markAsUnread(threadId: String) {
         guard let userId = authViewModel.userSub else { return }
         ThreadReadTracker.shared.markAsUnread(userId: userId, threadId: threadId)
-        // ★★★ 修正：未読戻す操作の詳細ログを削除（コスト削減） ★★★
-        // print("✅ スレッド '\(threadId)' を未読に戻しました")
     }
 
     private func saveFavorites() {
@@ -329,8 +354,6 @@ struct DMListView: View {
         let userDeletedKey = "deleted_threads_\(userId)"
         let encoded = deletedThreads.mapValues { $0.timeIntervalSince1970 }
         UserDefaults.standard.set(encoded, forKey: userDeletedKey)
-        // ★★★ 修正：削除スレッド保存の詳細ログを削除（コスト削減） ★★★
-        // print("✅ 削除されたスレッドを保存: \(deletedThreads.count)件")
     }
     
     private func loadDeletedThreads() {
@@ -339,7 +362,5 @@ struct DMListView: View {
         if let encoded = UserDefaults.standard.dictionary(forKey: userDeletedKey) as? [String: Double] {
             deletedThreads = encoded.mapValues { Date(timeIntervalSince1970: $0) }
         }
-        // ★★★ 修正：削除スレッド読み込みの詳細ログを削除（コスト削減） ★★★
-        // print("✅ 削除されたスレッドを読み込み: \(deletedThreads.count)件")
     }
 }

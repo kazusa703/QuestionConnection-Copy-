@@ -10,8 +10,13 @@ struct ProfileView: View {
     // ユーザー情報セクションの開閉状態
     @State private var isUserInfoExpanded: Bool = false
     
-    // ★★★ 1.「自分が作成した質問」セクションの開閉状態を管理するStateを追加 ★★★
+    // ★★★ 追加：「自分が作成した質問」セクションの開閉状態 ★★★
     @State private var isMyQuestionsExpanded: Bool = false
+    
+    // ★★★ 追加：プロフィール画像関連 ★★★
+    @State private var showingImagePicker: Bool = false
+    @State private var selectedImage: UIImage?
+    @State private var isUploadingImage: Bool = false
 
     private var isNicknameChanged: Bool {
         viewModel.nickname != originalNickname
@@ -21,8 +26,61 @@ struct ProfileView: View {
         NavigationStack {
             if authViewModel.isSignedIn {
                 Form {
-                    // --- ユーザー情報セクション (変更なし) ---
+                    // --- ユーザー情報セクション ---
                     DisclosureGroup("ユーザー情報", isExpanded: $isUserInfoExpanded) {
+                        // ★★★ 追加：プロフィール画像 ★★★
+                        VStack(alignment: .center, spacing: 12) {
+                            Text("プロフィール画像")
+                                .font(.callout)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            
+                            // 画像プレビュー
+                            if let image = selectedImage {
+                                Image(uiImage: image)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 100, height: 100)
+                                    .clipShape(Circle())
+                            } else if let imageUrl = viewModel.userProfileImages[authViewModel.userSub ?? ""],
+                                      let url = URL(string: imageUrl) {
+                                AsyncImage(url: url) { image in
+                                    image
+                                        .resizable()
+                                        .scaledToFill()
+                                }
+                                placeholder: {
+                                    Circle()
+                                        .fill(Color.gray.opacity(0.3))
+                                }
+                                .frame(width: 100, height: 100)
+                                .clipShape(Circle())
+                            } else {
+                                Image(systemName: "person.crop.circle.fill")
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 100, height: 100)
+                                    .foregroundColor(.gray)
+                            }
+                            
+                            // 画像選択ボタン
+                            Button(action: { showingImagePicker = true }) {
+                                HStack {
+                                    Spacer()
+                                    if isUploadingImage {
+                                        ProgressView()
+                                            .padding(.trailing, 8)
+                                    } else {
+                                        Image(systemName: "photo")
+                                            .padding(.trailing, 8)
+                                    }
+                                    Text(isUploadingImage ? "アップロード中..." : "画像を選択")
+                                    Spacer()
+                                }
+                            }
+                            .disabled(isUploadingImage)
+                        }
+                        .padding(.vertical, 8)
+                        
                         // --- Email表示 ---
                         HStack {
                             Text("Email")
@@ -73,7 +131,7 @@ struct ProfileView: View {
                         Text(viewModel.nicknameAlertMessage ?? "不明なエラー")
                     }
 
-                    // --- クイズ成績セクション (変更なし) ---
+                    // --- クイズ成績セクション ---
                     Section(header: Text("クイズ成績")) {
                         if viewModel.isLoadingUserStats {
                             HStack { Spacer(); ProgressView(); Spacer() }
@@ -86,26 +144,24 @@ struct ProfileView: View {
                         }
                     }
 
-                    // ★★★ 2. 従来の Section を DisclosureGroup に変更 ★★★
+                    // --- 自分が作成した質問セクション ---
                     DisclosureGroup("自分が作成した質問", isExpanded: $isMyQuestionsExpanded) {
                          if viewModel.isLoadingMyQuestions {
                              HStack { Spacer(); ProgressView(); Spacer() }
                         } else if viewModel.myQuestions.isEmpty {
                             Text("まだ質問を作成していません。").foregroundColor(.secondary)
                         } else {
-                            // DisclosureGroup内でListを使うとインデントが深くなりすぎる場合があるため、
-                            // Listを削除し、ForEachで直接リンクを表示します。
                             ForEach(viewModel.myQuestions) { question in
                                 NavigationLink(destination: QuestionAnalyticsView(question: question).environmentObject(viewModel)) {
                                     VStack(alignment: .leading) {
                                         Text(question.title).font(.headline)
                                         Text("タグ: \(question.tags.joined(separator: ", "))").font(.caption).foregroundColor(.secondary)
                                     }
-                                    .padding(.vertical, 4) // Listのセルのような余白を追加
+                                    .padding(.vertical, 4)
                                 }
                             }
                         }
-                    } // ★★★ End DisclosureGroup (My Questions) ★★★
+                    }
 
                 } // End Form
                 .onAppear {
@@ -121,7 +177,7 @@ struct ProfileView: View {
                          fetchProfileData()
                      }
                 }
-                // --- ツールバー (変更なし) ---
+                // --- ツールバー ---
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
                                             NavigationLink {
@@ -132,9 +188,13 @@ struct ProfileView: View {
                                             }
                     }
                 }
+                // ★★★ 追加：ImagePickerを表示 ★★★
+                .sheet(isPresented: $showingImagePicker) {
+                    ImagePicker(selectedImage: $selectedImage, onImageSelected: uploadProfileImage)
+                }
 
             } else {
-                // --- ゲストユーザー向けの表示 (変更なし) ---
+                // --- ゲストユーザー向けの表示 ---
                 VStack(spacing: 20) {
                     Image(systemName: "person.crop.circle.fill")
                         .font(.system(size: 80))
@@ -152,43 +212,99 @@ struct ProfileView: View {
         } // End NavigationStack
     } // End body
 
-    // (saveNicknameAction, fetchProfileData, resetLocalState 関数は変更なし)
     private func saveNicknameAction() {
-            guard let userId = authViewModel.userSub else {
-                viewModel.nicknameAlertMessage = "認証情報がありません。再ログインしてください。"
-                viewModel.showNicknameAlert = true
-                return
-            }
-            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-            
-            Task {
-                await viewModel.updateNickname(userId: userId)
-                if viewModel.nicknameAlertMessage == "ニックネームを保存しました。" {
-                    originalNickname = viewModel.nickname
-                }
-            }
+        guard let userId = authViewModel.userSub else {
+            viewModel.nicknameAlertMessage = "認証情報がありません。再ログインしてください。"
+            viewModel.showNicknameAlert = true
+            return
         }
-
-        private func fetchProfileData() {
-            guard authViewModel.isSignedIn,
-                  let userId = authViewModel.userSub else { return }
-            
-            Task {
-                async let fetchQuestionsTask: () = await viewModel.fetchMyQuestions(authorId: userId)
-                async let fetchStatsTask: () = await viewModel.fetchUserStats(userId: userId)
-                async let fetchNicknameTask: () = await viewModel.fetchMyProfile(userId: userId)
-                
-                _ = await [fetchQuestionsTask, fetchStatsTask, fetchNicknameTask]
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        
+        Task {
+            await viewModel.updateNickname(userId: userId)
+            if viewModel.nicknameAlertMessage == "ニックネームを保存しました。" {
                 originalNickname = viewModel.nickname
             }
         }
-
-        private func resetLocalState() {
-             viewModel.myQuestions = []
-             viewModel.userStats = nil
-             viewModel.analyticsResult = nil
-             viewModel.nickname = ""
-             originalNickname = ""
-        }
+    }
     
+    // ★★★ 追加：プロフィール画像アップロード ★★★
+    private func uploadProfileImage(_ image: UIImage) {
+        guard let userId = authViewModel.userSub else {
+            viewModel.nicknameAlertMessage = "認証情報がありません。"
+            viewModel.showNicknameAlert = true
+            return
+        }
+        
+        selectedImage = image
+        showingImagePicker = false
+        isUploadingImage = true
+        
+        Task {
+            await viewModel.uploadProfileImage(userId: userId, image: image)
+            isUploadingImage = false
+        }
+    }
+
+    private func fetchProfileData() {
+        guard authViewModel.isSignedIn,
+              let userId = authViewModel.userSub else { return }
+        
+        Task {
+            async let fetchQuestionsTask: () = await viewModel.fetchMyQuestions(authorId: userId)
+            async let fetchStatsTask: () = await viewModel.fetchUserStats(userId: userId)
+            async let fetchNicknameTask: () = await viewModel.fetchMyProfile(userId: userId)
+            
+            _ = await [fetchQuestionsTask, fetchStatsTask, fetchNicknameTask]
+            originalNickname = viewModel.nickname
+        }
+    }
+
+    private func resetLocalState() {
+         viewModel.myQuestions = []
+         viewModel.userStats = nil
+         viewModel.analyticsResult = nil
+         viewModel.nickname = ""
+         originalNickname = ""
+    }
+}
+
+// ★★★ 追加：ImagePicker コンポーネント ★★★
+struct ImagePicker: UIViewControllerRepresentable {
+    @Binding var selectedImage: UIImage?
+    var onImageSelected: (UIImage) -> Void
+    @Environment(\.presentationMode) var presentationMode
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.delegate = context.coordinator
+        picker.sourceType = .photoLibrary
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: ImagePicker
+
+        init(_ parent: ImagePicker) {
+            self.parent = parent
+        }
+
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let image = info[.originalImage] as? UIImage {
+                parent.selectedImage = image
+                parent.onImageSelected(image)
+            }
+            parent.presentationMode.wrappedValue.dismiss()
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.presentationMode.wrappedValue.dismiss()
+        }
+    }
 }

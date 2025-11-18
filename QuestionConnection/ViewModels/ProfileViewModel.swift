@@ -1,6 +1,6 @@
 import Foundation
 import Combine
-// API呼び出し自体はURLSessionを使うため、AWSClientRuntime は不要です
+import UIKit // ★★★ 追加 ★★★
 
 // (UserStats, QuestionAnalyticsResult, BookmarkResponse, BlocklistResponse 構造体は変更なし)
 struct UserStats: Codable {
@@ -14,12 +14,14 @@ struct QuestionAnalyticsResult: Codable {
     let accuracy: Double
 }
 
-// ★★★ 1. UserProfile に notifyOnDM を追加 ★★★
+// ★★★ 1. UserProfile に profileImageUrl を追加 ★★★
 struct UserProfile: Codable {
     let nickname: String?
     let notifyOnCorrectAnswer: Bool? // 通知設定
-    let notifyOnDM: Bool? // ★ DM通知設定 (追加)
+    let notifyOnDM: Bool? // ★ DM通知設定
+    let profileImageUrl: String? // ★★★ プロフィール画像URL (追加) ★★★
 }
+
 struct BookmarkResponse: Decodable {
     let bookmarks: [String] // もしキー名が違うならここを修正
 }
@@ -62,6 +64,10 @@ class ProfileViewModel: ObservableObject {
 
     // (キャッシュ戦略 ... 変更なし)
     @Published var userNicknames: [String: String] = [:] // キャッシュ
+    
+    // ★★★ 追加：プロフィール画像のキャッシュ ★★★
+    @Published var userProfileImages: [String: String] = [:]
+
     private var inFlightNicknameTasks: [String: Task<String, Never>] = [:] // 進行中のタスク
     private var failedAt: [String: Date] = [:] // 失敗記録
     private let retryCooldown: TimeInterval = 60 // 60秒のクールダウン
@@ -226,6 +232,7 @@ class ProfileViewModel: ObservableObject {
         myQuestions = []
         userStats = nil
         userNicknames = [:]
+        userProfileImages = [:] // ★ キャッシュクリア
         failedAt = [:]
         inFlightNicknameTasks.values.forEach { $0.cancel() }
         inFlightNicknameTasks = [:]
@@ -320,6 +327,124 @@ class ProfileViewModel: ObservableObject {
             return name // ★ UI表示用に変換
         }
     }
+    
+    // --- ★★★ 修正した fetchNicknameAndImage ★★★ ---
+    /// ニックネームとプロフィール画像を一緒に取得
+    func fetchNicknameAndImage(userId: String) async -> (nickname: String, imageUrl: String?) {
+        // キャッシュ確認
+        if let cached = userNicknames[userId] {
+            return (cached, userProfileImages[userId])
+        }
+        
+        // ★★★ 修正：/users/{userId} エンドポイントを使用 ★★★
+        let endpoint = "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/users/\(userId)"
+        
+        guard let url = URL(string: endpoint) else {
+            return ("不明", nil)
+        }
+        
+        do {
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            
+            // ★★★ 追加：トークンを含める ★★★
+            if let token = await authViewModel.getValidIdToken() {
+                request.setValue(token, forHTTPHeaderField: "Authorization")
+            }
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            // ★★★ デバッグ出力 ★★★
+            if let httpResponse = response as? HTTPURLResponse {
+                print("fetchNicknameAndImage response status: \(httpResponse.statusCode)")
+            }
+            // print("fetchNicknameAndImage data: \(String(data: data, encoding: .utf8) ?? "nil")")
+            
+            let decoder = JSONDecoder()
+            let profile = try decoder.decode(UserProfile.self, from: data)
+            
+            let nickname = profile.nickname ?? "（未設定）"
+            let imageUrl = profile.profileImageUrl
+            
+            // ★★★ メインスレッドで更新 ★★★
+            await MainActor.run {
+                self.userNicknames[userId] = nickname
+                if let imageUrl = imageUrl {
+                    self.userProfileImages[userId] = imageUrl
+                    print("✅ プロフィール画像URL キャッシュ: \(userId) -> \(imageUrl)")
+                } else {
+                    print("⚠️ プロフィール画像URL なし: \(userId)")
+                }
+            }
+            
+            return (nickname, imageUrl)
+        } catch {
+            print("❌ Error fetching profile: \(error)")
+            await MainActor.run {
+                self.userNicknames[userId] = "不明"
+            }
+            return ("不明", nil)
+        }
+    }
+    // --- ★★★ 修正ここまで ★★★ ---
+    
+    // --- ★★★ 追加：プロフィール画像をアップロード ★★★ ---
+    func uploadProfileImage(userId: String, image: UIImage) async {
+        guard let imageData = image.jpegData(compressionQuality: 0.8) else {
+            print("❌ 画像の圧縮に失敗")
+            return
+        }
+        
+        guard let idToken = await authViewModel.getValidIdToken() else {
+            print("❌ 画像アップロード: 認証トークン取得失敗")
+            return
+        }
+        
+        // ★★★ マルチパートフォームデータでアップロード ★★★
+        let boundary = UUID().uuidString
+        var body = Data()
+        
+        // boundary
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"profileImage\"; filename=\"profile.jpg\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
+        body.append(imageData)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        
+        // ★ パスを修正: /users/{userId}/profileImage (POST) を想定
+        let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("profileImage")
+        
+        do {
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+            request.httpBody = body
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                print("❌ 画像アップロードAPIエラー: \(response)")
+                return
+            }
+            
+            // ★★★ レスポンスから画像URLを取得 ★★★
+            // レスポンスJSON: { "message": "...", "profileImageUrl": "..." } を想定
+            // ここでは簡易的に辞書でデコード
+            if let jsonResponse = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let imageUrl = jsonResponse["profileImageUrl"] as? String {
+                
+                await MainActor.run {
+                    self.userProfileImages[userId] = imageUrl
+                    print("✅ プロフィール画像アップロード成功: \(imageUrl)")
+                }
+            }
+        } catch {
+            print("❌ 画像アップロードエラー: \(error)")
+        }
+    }
+    // --- ★★★ 追加完了 ★★★ ---
+    
     func warmFetchNicknames(for userIds: Set<String>) {
         for uid in userIds {
             if userNicknames[uid] == nil, inFlightNicknameTasks[uid] == nil {
@@ -382,6 +507,10 @@ class ProfileViewModel: ObservableObject {
             self.notifyOnCorrectAnswer = profile.notifyOnCorrectAnswer ?? false
             self.notifyOnDM = profile.notifyOnDM ?? false // ★ 追加
             userNicknames[userId] = profile.nickname ?? ""
+            // ★ 画像URLも必要ならここでキャッシュ更新
+            if let img = profile.profileImageUrl {
+                userProfileImages[userId] = img
+            }
         } catch {
             print("プロファイル取得APIへのリクエスト中にエラー(ID: \(userId)): \(error)")
         }
@@ -535,7 +664,7 @@ class ProfileViewModel: ObservableObject {
         }
     }
     
-    // (deleteAccount ... 変更なし)
+    // (deleteAccount ... fetchQuestionAnalytics までの関数は変更なし)
     func deleteAccount() async -> Bool {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else {
             print("ProfileViewModel: 未ログインのためアカウント削除を実行できません。")
@@ -644,8 +773,8 @@ class ProfileViewModel: ObservableObject {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return false }
         let (wasInserted, _) = blockedUserIds.insert(blockedUserId)
         guard wasInserted else {
-             print("ブロック追加: 既にローカルに存在 \(blockedUserId)")
-             return true
+            print("ブロック追加: 既にローカルに存在 \(blockedUserId)")
+            return true
         }
         print("ブロック追加 (ローカル): \(blockedUserId)")
         let url = usersApiEndpoint.appendingPathComponent("me").appendingPathComponent("block")
@@ -678,8 +807,8 @@ class ProfileViewModel: ObservableObject {
     func removeBlock(blockedUserId: String) async -> Bool {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return false }
         guard blockedUserIds.contains(blockedUserId) else {
-             print("ブロック解除: ローカルに存在しない \(blockedUserId)")
-             return true
+            print("ブロック解除: ローカルに存在しない \(blockedUserId)")
+            return true
         }
         blockedUserIds.remove(blockedUserId)
         print("ブロック解除 (ローカル): \(blockedUserId)")
@@ -710,52 +839,26 @@ class ProfileViewModel: ObservableObject {
     func isBlocked(userId: String) -> Bool {
         return blockedUserIds.contains(userId)
     }
-    
-    // --- ★★★ ここが修正された関数 ★★★ ---
     func fetchMyQuestions(authorId: String) async {
         guard !authorId.isEmpty else { return }
         isLoadingMyQuestions = true
-        
-        // ★★★ 修正: 認証トークンを取得 ★★★
-        guard let idToken = await authViewModel.getValidIdToken() else {
-            print("自分の質問リスト取得: 認証トークン取得失敗")
-            self.myQuestions = []
-            isLoadingMyQuestions = false
-            return
-        }
-        
         let url = usersApiEndpoint.appendingPathComponent(authorId).appendingPathComponent("questions")
         do {
-            // ★★★ URLRequest を使用してトークンを送信 ★★★
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.setValue(idToken, forHTTPHeaderField: "Authorization")
-            
-            let (data, response) = try await URLSession.shared.data(for: request)
-            
+            let (data, response) = try await URLSession.shared.data(from: url)
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                 print("自分の質問リスト取得時にサーバーエラー: \(response)")
                 self.myQuestions = []
                 isLoadingMyQuestions = false
                 return
             }
-            
             self.myQuestions = try JSONDecoder().decode([Question].self, from: data)
-            print("✅ 自分の質問リストの取得に成功。件数: \(myQuestions.count)")
-            
-            // ★★★ デバッグ: 各質問の shareCode を確認 ★★★
-            for (index, question) in self.myQuestions.enumerated() {
-                print("📋 Question[\(index)]: title=\(question.title), shareCode=\(question.shareCode ?? "❌NIL")")
-            }
-            
+            print("自分の質問リストの取得に成功。件数: \(myQuestions.count)")
         } catch {
             print("自分の質問リストの取得またはデコードに失敗: \(error)")
             self.myQuestions = []
         }
         isLoadingMyQuestions = false
     }
-    // --- ★★★ 修正ここまで ★★★ ---
-    
     func fetchUserStats(userId: String) async {
         guard !userId.isEmpty else { return }
         isLoadingUserStats = true
