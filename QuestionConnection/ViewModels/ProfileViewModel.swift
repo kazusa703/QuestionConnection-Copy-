@@ -1,6 +1,6 @@
 import Foundation
 import Combine
-import UIKit // ★★★ 追加 ★★★
+import UIKit
 
 // (UserStats, QuestionAnalyticsResult, BookmarkResponse, BlocklistResponse 構造体は変更なし)
 struct UserStats: Codable {
@@ -14,16 +14,16 @@ struct QuestionAnalyticsResult: Codable {
     let accuracy: Double
 }
 
-// ★★★ 1. UserProfile に profileImageUrl を追加 ★★★
+// UserProfile
 struct UserProfile: Codable {
     let nickname: String?
-    let notifyOnCorrectAnswer: Bool? // 通知設定
-    let notifyOnDM: Bool? // ★ DM通知設定
-    let profileImageUrl: String? // ★★★ プロフィール画像URL (追加) ★★★
+    let notifyOnCorrectAnswer: Bool?
+    let notifyOnDM: Bool?
+    let profileImageUrl: String?
 }
 
 struct BookmarkResponse: Decodable {
-    let bookmarks: [String] // もしキー名が違うならここを修正
+    let bookmarks: [String]
 }
 struct BlocklistResponse: Decodable {
     let blockedUserIds: [String]
@@ -46,7 +46,6 @@ class ProfileViewModel: ObservableObject {
     @Published var nicknameAlertMessage: String?
     @Published var showNicknameAlert = false
     
-    // (blockedUserIds ... isLoadingSettings までのプロパティは変更なし)
     @Published var blockedUserIds: Set<String> = []
     @Published var isLoadingBlocklist = false
     @Published var bookmarkedQuestionIds: Set<String> = []
@@ -54,9 +53,7 @@ class ProfileViewModel: ObservableObject {
     @Published var isDeletingQuestion = false
     @Published var deletionError: String?
     
-    // (notifyOnCorrectAnswer は変更なし)
     @Published var notifyOnCorrectAnswer: Bool = false
-    // ★★★ 2. DM通知用の設定変数を追加 ★★★
     @Published var notifyOnDM: Bool = false
     
     @Published var isLoadingSettings: Bool = false
@@ -64,17 +61,23 @@ class ProfileViewModel: ObservableObject {
 
     // (キャッシュ戦略 ... 変更なし)
     @Published var userNicknames: [String: String] = [:] // キャッシュ
-    
-    // ★★★ 追加：プロフィール画像のキャッシュ ★★★
     @Published var userProfileImages: [String: String] = [:]
+    
+    @Published var profileImageAlertMessage: String?
+    @Published var showProfileImageAlert = false
+    @Published var isUploadingProfileImage = false
+    
+    // ★★★ 追加：残り変更回数と現在の変更回数 ★★★
+    @Published var remainingProfileImageChanges: Int = 2
+    @Published var profileImageChangedCount: Int = 0
 
-    private var inFlightNicknameTasks: [String: Task<String, Never>] = [:] // 進行中のタスク
-    private var failedAt: [String: Date] = [:] // 失敗記録
-    private let retryCooldown: TimeInterval = 60 // 60秒のクールダウン
+    private var inFlightNicknameTasks: [String: Task<String, Never>] = [:]
+    private var failedAt: [String: Date] = [:]
+    private let retryCooldown: TimeInterval = 60
 
 
-    // (apiEndpoint, authViewModel, init ... 変更なし)
-    private let usersApiEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/users")!
+    // ★★★ 修正：public に変更 (private を削除) ★★★
+    let usersApiEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/users")!
     private let questionsApiEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/questions")!
     private let authViewModel: AuthViewModel
 
@@ -84,7 +87,6 @@ class ProfileViewModel: ObservableObject {
             if authViewModel.isSignedIn {
                 await fetchBookmarks()
                 await fetchBlocklist()
-                // ★★★ ログイン時に「保留中のトークン」がないか確認する処理を追加 ★★★
                 await checkAndRegisterPendingDeviceToken()
             }
         }
@@ -388,20 +390,34 @@ class ProfileViewModel: ObservableObject {
     }
     // --- ★★★ 修正ここまで ★★★ ---
     
-    // --- ★★★ 追加：プロフィール画像をアップロード ★★★ ---
+    // --- ★★★ 追加：プロフィール画像をアップロード（詳細版・修正版） ★★★ ---
     func uploadProfileImage(userId: String, image: UIImage) async {
-        guard let imageData = image.jpegData(compressionQuality: 0.8) else {
-            print("❌ 画像の圧縮に失敗")
+        guard let idToken = await authViewModel.getValidIdToken() else {
+            profileImageAlertMessage = "認証に失敗しました。"
+            showProfileImageAlert = true
             return
         }
         
-        guard let idToken = await authViewModel.getValidIdToken() else {
-            print("❌ 画像アップロード: 認証トークン取得失敗")
+        isUploadingProfileImage = true // ローディング開始
+        
+        guard let imageData = image.jpegData(compressionQuality: 0.8) else {
+            profileImageAlertMessage = "画像の処理に失敗しました。"
+            showProfileImageAlert = true
+            isUploadingProfileImage = false
             return
         }
+        
+        // ★ パスを修正: /users/{userId}/profileImage (POST) を想定
+        let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("profileImage")
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
         
         // ★★★ マルチパートフォームデータでアップロード ★★★
         let boundary = UUID().uuidString
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        
         var body = Data()
         
         // boundary
@@ -411,37 +427,79 @@ class ProfileViewModel: ObservableObject {
         body.append(imageData)
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
         
-        // ★ パスを修正: /users/{userId}/profileImage (POST) を想定
-        let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("profileImage")
+        request.httpBody = body
         
         do {
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-            request.setValue(idToken, forHTTPHeaderField: "Authorization")
-            request.httpBody = body
-            
             let (data, response) = try await URLSession.shared.data(for: request)
             
-            guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-                print("❌ 画像アップロードAPIエラー: \(response)")
-                return
-            }
-            
-            // ★★★ レスポンスから画像URLを取得 ★★★
-            // レスポンスJSON: { "message": "...", "profileImageUrl": "..." } を想定
-            // ここでは簡易的に辞書でデコード
-            if let jsonResponse = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let imageUrl = jsonResponse["profileImageUrl"] as? String {
+            if let httpResponse = response as? HTTPURLResponse {
+                print("プロフィール画像アップロード: Status Code \(httpResponse.statusCode)")
                 
+                // ★★★ UI更新はメインスレッドで ★★★
                 await MainActor.run {
-                    self.userProfileImages[userId] = imageUrl
-                    print("✅ プロフィール画像アップロード成功: \(imageUrl)")
+                    switch httpResponse.statusCode {
+                    case 200...299:
+                        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                            
+                            // 画像URLを更新
+                            if let imageUrl = json["profileImageUrl"] as? String {
+                                self.userProfileImages[userId] = imageUrl
+                                print("✅ プロフィール画像URL: \(imageUrl)")
+                            }
+                            
+                            // ★★★ レスポンスから残り変更回数を取得 ★★★
+                            if let changeCount = json["changeCount"] as? Int,
+                               let maxChanges = json["maxChanges"] as? Int {
+                                self.profileImageChangedCount = changeCount
+                                self.remainingProfileImageChanges = maxChanges - changeCount
+                            }
+                            
+                            self.profileImageAlertMessage = "プロフィール画像をアップロードしました！"
+                            self.showProfileImageAlert = true
+                        } else {
+                            self.profileImageAlertMessage = "アップロードに成功しました（URL取得失敗）"
+                            self.showProfileImageAlert = true
+                        }
+                        
+                    case 403:
+                        // ★★★ 403 の場合は最大値に達した ★★★
+                        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                            if let changeCount = json["changeCount"] as? Int,
+                               let maxChanges = json["maxChanges"] as? Int {
+                                self.profileImageChangedCount = changeCount
+                                self.remainingProfileImageChanges = maxChanges - changeCount
+                            }
+                            
+                            if let nextDate = json["nextAvailableDate"] as? String {
+                                self.profileImageAlertMessage = "今月のプロフィール変更の上限に達しました\n(\(nextDate)以降に再度お試しください)"
+                            } else {
+                                self.profileImageAlertMessage = "今月のプロフィール変更の上限に達しました\n来月1日以降に再度お試しください"
+                            }
+                        } else {
+                            self.profileImageAlertMessage = "今月のプロフィール変更の上限に達しました"
+                        }
+                        self.showProfileImageAlert = true
+                        print("⚠️ 月の制限に達しました")
+                        
+                    case 413:
+                        self.profileImageAlertMessage = "画像ファイルが大きすぎます（最大10MB）"
+                        self.showProfileImageAlert = true
+                        
+                    default:
+                        self.profileImageAlertMessage = "画像のアップロードに失敗しました（エラー: \(httpResponse.statusCode)）"
+                        self.showProfileImageAlert = true
+                    }
                 }
             }
         } catch {
-            print("❌ 画像アップロードエラー: \(error)")
+            await MainActor.run {
+                self.profileImageAlertMessage = "エラーが発生しました: \(error.localizedDescription)"
+                self.showProfileImageAlert = true
+                print("❌ プロフィール画像アップロードエラー: \(error)")
+            }
         }
+        
+        isUploadingProfileImage = false // ローディング終了
     }
     // --- ★★★ 追加完了 ★★★ ---
     

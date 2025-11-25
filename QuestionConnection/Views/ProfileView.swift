@@ -17,6 +17,10 @@ struct ProfileView: View {
     @State private var showingImagePicker: Bool = false
     @State private var selectedImage: UIImage?
     @State private var isUploadingImage: Bool = false
+    
+    // ★★★ 追加：プロフィール画像のアラート表示用 ★★★
+    @State private var profileImageAlertMessage: String?
+    @State private var showProfileImageAlert: Bool = false
 
     private var isNicknameChanged: Bool {
         viewModel.nickname != originalNickname
@@ -62,22 +66,40 @@ struct ProfileView: View {
                                     .foregroundColor(.gray)
                             }
                             
-                            // 画像選択ボタン
-                            Button(action: { showingImagePicker = true }) {
+                            // ★★★ 修正：画像選択ボタン + 残り変更回数表示 ★★★
+                            VStack(spacing: 8) {
+                                Button(action: { showingImagePicker = true }) {
+                                    HStack {
+                                        Spacer()
+                                        if isUploadingImage {
+                                            ProgressView()
+                                                .padding(.trailing, 8)
+                                        } else {
+                                            Image(systemName: "photo")
+                                                .padding(.trailing, 8)
+                                        }
+                                        Text(isUploadingImage ? "アップロード中..." : "画像を選択")
+                                        Spacer()
+                                    }
+                                }
+                                .disabled(isUploadingImage || viewModel.remainingProfileImageChanges <= 0)
+                                
+                                // ★★★ 追加：残り変更回数を表示 ★★★
                                 HStack {
                                     Spacer()
-                                    if isUploadingImage {
-                                        ProgressView()
-                                            .padding(.trailing, 8)
+                                    if viewModel.remainingProfileImageChanges > 0 {
+                                        Text("残り変更回数: \(viewModel.remainingProfileImageChanges)/2")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
                                     } else {
-                                        Image(systemName: "photo")
-                                            .padding(.trailing, 8)
+                                        Text("今月の変更回数が上限に達しました")
+                                            .font(.caption)
+                                            .foregroundColor(.red)
                                     }
-                                    Text(isUploadingImage ? "アップロード中..." : "画像を選択")
                                     Spacer()
                                 }
                             }
-                            .disabled(isUploadingImage)
+                            .padding(.vertical, 8)
                         }
                         .padding(.vertical, 8)
                         
@@ -180,17 +202,23 @@ struct ProfileView: View {
                 // --- ツールバー ---
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
-                                            NavigationLink {
-                                                SettingsView()
-                                                    .environmentObject(authViewModel)
-                                            } label: {
-                                                Image(systemName: "gearshape")
-                                            }
+                        NavigationLink {
+                            SettingsView()
+                                .environmentObject(authViewModel)
+                        } label: {
+                            Image(systemName: "gearshape")
+                        }
                     }
                 }
                 // ★★★ 追加：ImagePickerを表示 ★★★
                 .sheet(isPresented: $showingImagePicker) {
                     ImagePicker(selectedImage: $selectedImage, onImageSelected: uploadProfileImage)
+                }
+                // ★★★ 追加：プロフィール画像のアラート ★★★
+                .alert("プロフィール画像", isPresented: $showProfileImageAlert) {
+                    Button("OK") { }
+                } message: {
+                    Text(profileImageAlertMessage ?? "不明なエラー")
                 }
 
             } else {
@@ -228,11 +256,11 @@ struct ProfileView: View {
         }
     }
     
-    // ★★★ 追加：プロフィール画像アップロード ★★★
+    // ★★★ 修正：プロフィール画像アップロード ★★★
     private func uploadProfileImage(_ image: UIImage) {
         guard let userId = authViewModel.userSub else {
-            viewModel.nicknameAlertMessage = "認証情報がありません。"
-            viewModel.showNicknameAlert = true
+            profileImageAlertMessage = "認証情報がありません。"
+            showProfileImageAlert = true
             return
         }
         
@@ -242,6 +270,16 @@ struct ProfileView: View {
         
         Task {
             await viewModel.uploadProfileImage(userId: userId, image: image)
+            
+            // ★★★ アラートメッセージを表示 ★★★
+            if let alertMessage = viewModel.profileImageAlertMessage {
+                profileImageAlertMessage = alertMessage
+                showProfileImageAlert = true
+            }
+            
+            // ★★★ アップロード完了後に残り変更回数を更新 ★★★
+            await fetchRemainingProfileImageChanges(userId: userId)
+            
             isUploadingImage = false
         }
     }
@@ -256,7 +294,50 @@ struct ProfileView: View {
             async let fetchNicknameTask: () = await viewModel.fetchMyProfile(userId: userId)
             
             _ = await [fetchQuestionsTask, fetchStatsTask, fetchNicknameTask]
+            
+            // ★★★ 追加：残り変更回数を計算 ★★★
+            await fetchRemainingProfileImageChanges(userId: userId)
+            
             originalNickname = viewModel.nickname
+        }
+    }
+    
+    // ★★★ 追加：残り変更回数を取得する関数 ★★★
+    private func fetchRemainingProfileImageChanges(userId: String) async {
+        guard let idToken = await authViewModel.getValidIdToken() else { return }
+        
+        let url = viewModel.usersApiEndpoint.appendingPathComponent(userId)
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue(idToken, forHTTPHeaderField: "Authorization")
+        
+        do {
+            let (data, _) = try await URLSession.shared.data(for: request)
+            
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let profileImageChangeDates = json["profileImageChangeDates"] as? [String] {
+                
+                // 今月の変更回数をカウント
+                let calendar = Calendar.current
+                let now = Date()
+                let currentMonth = calendar.dateComponents([.year, .month], from: now)
+                
+                let thisMonthCount = profileImageChangeDates.filter { dateStr in
+                    if let date = ISO8601DateFormatter().date(from: dateStr) {
+                        let dateComponents = calendar.dateComponents([.year, .month], from: date)
+                        return dateComponents.year == currentMonth.year && dateComponents.month == currentMonth.month
+                    }
+                    return false
+                }.count
+                
+                await MainActor.run {
+                    viewModel.profileImageChangedCount = thisMonthCount
+                    viewModel.remainingProfileImageChanges = max(0, 2 - thisMonthCount)
+                }
+            }
+        } catch {
+            print("Failed to fetch profile image change count: \(error)")
         }
     }
 
