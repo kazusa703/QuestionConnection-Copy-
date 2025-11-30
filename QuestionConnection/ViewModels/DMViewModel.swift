@@ -1,7 +1,7 @@
 import Foundation
 import Combine
 
-// ★★★ 追加: ブロック確認APIのレスポンス用 ★★★
+// ブロック確認APIのレスポンス用
 struct BlockCheckResponse: Decodable {
     let isBlockedByTarget: Bool
 }
@@ -9,14 +9,15 @@ struct BlockCheckResponse: Decodable {
 @MainActor
 class DMViewModel: ObservableObject {
 
-    @Published var threads: [Thread] = []
+    // ★★★ 修正: [Thread] -> [DMThread] ★★★
+    @Published var threads: [DMThread] = []
     @Published var messages: [Message] = []
     @Published var isLoading = false
 
     // 既存エンドポイント
     private let dmsEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/dms")!
     private let threadsEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/threads")!
-    // ★★★ 追加: ブロック確認用エンドポイント ★★★
+    // ブロック確認用エンドポイント
     private let usersApiEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/users")!
 
 
@@ -35,11 +36,7 @@ class DMViewModel: ObservableObject {
         return await authVM.getValidIdToken()
     }
     
-    // --- ★★★ ここからブロック確認関数を追加 ★★★ ---
-
-    /// 相手（targetId）が自分をブロックしているか確認する
-    /// - Parameter targetId: 相手のユーザーID
-    /// - Returns: true: ブロックされている / false: ブロックされていない / nil: エラー
+    // ブロック確認関数
     private func checkIfBlockedByTarget(targetId: String) async -> Bool? {
         guard let idToken = await getAuthToken() else {
             print("ブロック確認: 認証トークン取得失敗")
@@ -55,7 +52,6 @@ class DMViewModel: ObservableObject {
             return nil // エラー
         }
         
-        // --- ★★★ 修正: do-catchブロックを追加 (エラー 1) ★★★ ---
         do {
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
@@ -83,10 +79,7 @@ class DMViewModel: ObservableObject {
             print("ブロック確認APIの取得またはデコードに失敗: \(error)")
             return nil // エラー
         }
-        // --- ★★★ 修正ここまで ★★★ ---
     }
-    
-    // --- ★★★ ここまで追加 ★★★ ---
     
 
     // メッセージ一覧を取得: GET /threads/{threadId}/messages
@@ -163,7 +156,8 @@ class DMViewModel: ObservableObject {
                 return
             }
 
-            let decoded = try JSONDecoder().decode([Thread].self, from: data)
+            // ★★★ 修正: [DMThread] に変更 ★★★
+            let decoded = try JSONDecoder().decode([DMThread].self, from: data)
             self.threads = decoded
             print("スレッド一覧の取得に成功。件数: \(decoded.count)")
         } catch {
@@ -186,15 +180,18 @@ class DMViewModel: ObservableObject {
         return await sendInitialDM(recipientId: recipientId, senderId: senderId, questionTitle: questionTitle, messageText: messageText)
     }
 
-    // --- ★★★ 修正: `private` を削除 (エラー 2) ★★★ ---
     // 最小レスポンス用（{ "threadId": "..." } に対応）
     struct MinimalThreadId: Codable { let threadId: String }
 
-    // ★★★ sendInitialDMAndReturnThread 関数 (ブロック確認ロジック入り) ★★★
+    // ★★★ sendInitialDMAndReturnThread 関数 (戻り値を DMThread? に変更) ★★★
     func sendInitialDMAndReturnThread(recipientId: String,
                                       senderId: String,
                                       questionTitle: String,
-                                      messageText: String) async -> Thread? {
+                                      messageText: String,
+                                      voiceData: Data? = nil,
+                                      duration: Double? = nil,
+                                      imageData: Data? = nil
+    ) async -> DMThread? {  // ★★★ 修正: Thread -> DMThread ★★★
         guard let idToken = await getAuthToken() else {
             print("DM送信: 認証トークン取得失敗")
             return nil
@@ -208,20 +205,38 @@ class DMViewModel: ObservableObject {
         
         if isBlocked == nil {
             print("DM送信中止: ブロック状態の確認に失敗しました。")
-            // TODO: View側でアラート表示推奨
             return nil // エラー
         }
         
         if isBlocked == true {
             print("DM送信中止: 相手からブロックされています。")
-            // TODO: View側でアラート表示推奨
             return nil
         }
         // --- ブロック確認ここまで ---
 
 
-        // --- 2. ブロックされていなければDMを送信 (既存の処理) ---
-        let dmPayload = DM(recipientId: recipientId, senderId: senderId, questionTitle: questionTitle, messageText: messageText)
+        // --- 2. ブロックされていなければDMを送信 ---
+        var messageType = "text"
+        if voiceData != nil {
+            messageType = "voice"
+        } else if imageData != nil {
+            messageType = "image"
+        }
+        
+        // データをBase64に変換
+        let voiceBase64String = voiceData?.base64EncodedString()
+        let imageBase64String = imageData?.base64EncodedString()
+        
+        let dmPayload = DM(
+            recipientId: recipientId,
+            senderId: senderId,
+            questionTitle: questionTitle,
+            messageText: messageText,
+            messageType: messageType,
+            voiceBase64: voiceBase64String,
+            voiceDuration: duration,
+            imageBase64: imageBase64String
+        )
 
         do {
             var request = URLRequest(url: dmsEndpoint)
@@ -238,9 +253,9 @@ class DMViewModel: ObservableObject {
                 return nil
             }
 
-            // (既存のレスポンス処理 ... 変更なし)
-            // 1) APIがThread相当JSONを返す場合
-            if let t = try? JSONDecoder().decode(Thread.self, from: data) {
+            // 1) APIが Thread 相当JSONを返す場合
+            // ★★★ 修正: DMThread でデコード ★★★
+            if let t = try? JSONDecoder().decode(DMThread.self, from: data) {
                 print("DM送信に成功（ThreadデコードOK）。threadId=\(t.threadId)")
                 return t
             }
@@ -251,7 +266,7 @@ class DMViewModel: ObservableObject {
                 returnedThreadId = m.threadId
             }
 
-            // 3) フォールバック: 遅延後に一覧から特定（2回まで）
+            // 3) フォールバック
             if let myUserId = authViewModel?.userSub {
                 try? await Task.sleep(nanoseconds: 300_000_000) // 0.3s
                 for attempt in 1...2 {
@@ -285,4 +300,4 @@ class DMViewModel: ObservableObject {
             return nil
         }
     }
-} // --- ★★★ 修正: クラスの閉じ括弧 (エラー 3, 4) ★★★
+}

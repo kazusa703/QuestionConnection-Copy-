@@ -10,15 +10,15 @@ struct ProfileView: View {
     // ユーザー情報セクションの開閉状態
     @State private var isUserInfoExpanded: Bool = false
     
-    // ★★★ 追加：「自分が作成した質問」セクションの開閉状態 ★★★
+    // 「自分が作成した質問」セクションの開閉状態
     @State private var isMyQuestionsExpanded: Bool = false
     
-    // ★★★ 追加：プロフィール画像関連 ★★★
+    // プロフィール画像関連
     @State private var showingImagePicker: Bool = false
     @State private var selectedImage: UIImage?
     @State private var isUploadingImage: Bool = false
     
-    // ★★★ 追加：プロフィール画像のアラート表示用 ★★★
+    // プロフィール画像のアラート表示用
     @State private var profileImageAlertMessage: String?
     @State private var showProfileImageAlert: Bool = false
 
@@ -32,7 +32,7 @@ struct ProfileView: View {
                 Form {
                     // --- ユーザー情報セクション ---
                     DisclosureGroup("ユーザー情報", isExpanded: $isUserInfoExpanded) {
-                        // ★★★ 追加：プロフィール画像 ★★★
+                        // プロフィール画像
                         VStack(alignment: .center, spacing: 12) {
                             Text("プロフィール画像")
                                 .font(.callout)
@@ -66,7 +66,7 @@ struct ProfileView: View {
                                     .foregroundColor(.gray)
                             }
                             
-                            // ★★★ 修正：画像選択ボタン + 残り変更回数表示 ★★★
+                            // 画像選択ボタン + 残り変更回数表示
                             VStack(spacing: 8) {
                                 Button(action: { showingImagePicker = true }) {
                                     HStack {
@@ -84,7 +84,7 @@ struct ProfileView: View {
                                 }
                                 .disabled(isUploadingImage || viewModel.remainingProfileImageChanges <= 0)
                                 
-                                // ★★★ 追加：残り変更回数を表示 ★★★
+                                // 残り変更回数を表示
                                 HStack {
                                     Spacer()
                                     if viewModel.remainingProfileImageChanges > 0 {
@@ -103,17 +103,7 @@ struct ProfileView: View {
                         }
                         .padding(.vertical, 8)
                         
-                        // --- Email表示 ---
-                        HStack {
-                            Text("Email")
-                                .font(.callout)
-                                .frame(width: 90, alignment: .leading)
-                            Spacer()
-                            Text(authViewModel.userEmail ?? "読み込み中...")
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                        }
+                        // ★★★ 修正: ここにあったEmail表示を削除しました ★★★
 
                         // --- ニックネーム入力 ---
                         HStack(alignment: .center) {
@@ -210,11 +200,11 @@ struct ProfileView: View {
                         }
                     }
                 }
-                // ★★★ 追加：ImagePickerを表示 ★★★
+                // ImagePickerを表示
                 .sheet(isPresented: $showingImagePicker) {
                     ImagePicker(selectedImage: $selectedImage, onImageSelected: uploadProfileImage)
                 }
-                // ★★★ 追加：プロフィール画像のアラート ★★★
+                // プロフィール画像のアラート
                 .alert("プロフィール画像", isPresented: $showProfileImageAlert) {
                     Button("OK") { }
                 } message: {
@@ -256,7 +246,7 @@ struct ProfileView: View {
         }
     }
     
-    // ★★★ 修正：プロフィール画像アップロード ★★★
+    // プロフィール画像アップロード
     private func uploadProfileImage(_ image: UIImage) {
         guard let userId = authViewModel.userSub else {
             profileImageAlertMessage = "認証情報がありません。"
@@ -271,13 +261,13 @@ struct ProfileView: View {
         Task {
             await viewModel.uploadProfileImage(userId: userId, image: image)
             
-            // ★★★ アラートメッセージを表示 ★★★
+            // アラートメッセージを表示
             if let alertMessage = viewModel.profileImageAlertMessage {
                 profileImageAlertMessage = alertMessage
                 showProfileImageAlert = true
             }
             
-            // ★★★ アップロード完了後に残り変更回数を更新 ★★★
+            // アップロード完了後に残り変更回数を更新
             await fetchRemainingProfileImageChanges(userId: userId)
             
             isUploadingImage = false
@@ -295,14 +285,14 @@ struct ProfileView: View {
             
             _ = await [fetchQuestionsTask, fetchStatsTask, fetchNicknameTask]
             
-            // ★★★ 追加：残り変更回数を計算 ★★★
+            // 残り変更回数を計算
             await fetchRemainingProfileImageChanges(userId: userId)
             
             originalNickname = viewModel.nickname
         }
     }
     
-    // ★★★ 追加：残り変更回数を取得する関数 ★★★
+    // 残り変更回数を取得する関数
     private func fetchRemainingProfileImageChanges(userId: String) async {
         guard let idToken = await authViewModel.getValidIdToken() else { return }
         
@@ -350,7 +340,7 @@ struct ProfileView: View {
     }
 }
 
-// ★★★ 追加：ImagePicker コンポーネント ★★★
+// ImagePicker コンポーネント
 struct ImagePicker: UIViewControllerRepresentable {
     @Binding var selectedImage: UIImage?
     var onImageSelected: (UIImage) -> Void

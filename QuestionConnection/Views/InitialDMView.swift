@@ -14,8 +14,10 @@ struct InitialDMView: View {
     @State private var showAlert = false
     @State private var alertTitle = ""
     @State private var alertMessage = ""
-    @State private var pendingThread: Thread? = nil
-    @State private var navigateToThread: Thread? = nil
+    
+    // ★★★ 修正: Thread -> DMThread に変更 ★★★
+    @State private var pendingThread: DMThread? = nil
+    @State private var navigateToThread: DMThread? = nil
 
     // 表示用のトピック文（同じなら非表示）
     private var topicText: String? {
@@ -28,7 +30,7 @@ struct InitialDMView: View {
 
     var body: some View {
         VStack(spacing: 15) {
-            // ★★★ 追加：全問正解した質問タイトルを表示 ★★★
+            // 全問正解した質問タイトルを表示
             VStack(alignment: .center, spacing: 8) {
                 HStack {
                     Image(systemName: "checkmark.circle.fill")
@@ -117,6 +119,7 @@ struct InitialDMView: View {
         guard !text.isEmpty else { return }
 
         Task {
+            // ここで返ってくるのは DMThread? なので、pendingThread も DMThread? 型である必要があります
             let thread = await viewModel.sendInitialDMAndReturnThread(
                 recipientId: recipientId,
                 senderId: senderId,
