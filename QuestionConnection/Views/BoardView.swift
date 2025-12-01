@@ -14,14 +14,20 @@ struct BoardView: View {
 
     @State private var searchText = ""
     
+    // 並び替えオプション
     @State private var sortOption: SortOption = .newest
+    
+    // ランダム表示用の一時リスト
+    @State private var randomQuestions: [Question] = []
 
     enum SortOption {
         case newest
         case oldest
+        case random
     }
 
-    private var filteredQuestions: [Question] {
+    // フィルタリングのみを行う（ソートはしない）プロパティ
+    private var filteredPool: [Question] {
         // 1. 検索フィルタ
         let searchedQuestions: [Question]
         if searchText.isEmpty {
@@ -37,30 +43,26 @@ struct BoardView: View {
         }
         
         // 2. ブロックフィルタ
-        guard authViewModel.isSignedIn else {
-            return filterByPurposeTagsAndSort(searchedQuestions)
+        let blockedFiltered: [Question]
+        if authViewModel.isSignedIn {
+            blockedFiltered = searchedQuestions.filter { question in
+                !profileViewModel.isBlocked(userId: question.authorId)
+            }
+        } else {
+            blockedFiltered = searchedQuestions
         }
         
-        let blockedFiltered = searchedQuestions.filter { question in
-            !profileViewModel.isBlocked(userId: question.authorId)
-        }
-        
-        // 3. 目的・タグフィルタとソートを適用
-        return filterByPurposeTagsAndSort(blockedFiltered)
-    }
-
-    private func filterByPurposeTagsAndSort(_ questions: [Question]) -> [Question] {
-        // 目的でフィルタ
+        // 3. 目的でフィルタ
         let purposeFiltered: [Question]
         if selectedPurpose.isEmpty {
-            purposeFiltered = questions
+            purposeFiltered = blockedFiltered
         } else {
-            purposeFiltered = questions.filter { question in
+            purposeFiltered = blockedFiltered.filter { question in
                 question.purpose == selectedPurpose
             }
         }
         
-        // ブックマークでフィルタ
+        // 4. ブックマークでフィルタ
         let bookmarkFiltered: [Question]
         if showingOnlyBookmarks && authViewModel.isSignedIn {
             bookmarkFiltered = purposeFiltered.filter { question in
@@ -70,24 +72,27 @@ struct BoardView: View {
             bookmarkFiltered = purposeFiltered
         }
         
-        // タグでフィルタ（AND検索）
-        let tagFiltered: [Question]
+        // 5. タグでフィルタ（AND検索）
         if selectedTags.isEmpty {
-            tagFiltered = bookmarkFiltered
+            return bookmarkFiltered
         } else {
-            tagFiltered = bookmarkFiltered.filter { question in
+            return bookmarkFiltered.filter { question in
                 selectedTags.allSatisfy { selectedTag in
                     question.tags.contains { $0.localizedCaseInsensitiveContains(selectedTag) }
                 }
             }
         }
-        
-        // 並び替えを適用
+    }
+
+    // 最終的な表示リスト（ソート または ランダム抽出）
+    private var displayQuestions: [Question] {
         switch sortOption {
         case .newest:
-            return tagFiltered.sorted { $0.createdAt > $1.createdAt }
+            return filteredPool.sorted { $0.createdAt > $1.createdAt }
         case .oldest:
-            return tagFiltered.sorted { $0.createdAt < $1.createdAt }
+            return filteredPool.sorted { $0.createdAt < $1.createdAt }
+        case .random:
+            return randomQuestions
         }
     }
 
@@ -119,35 +124,62 @@ struct BoardView: View {
                 // --- 質問リスト ---
                 if viewModel.isLoading && viewModel.questions.isEmpty {
                     ProgressView()
-                } else if filteredQuestions.isEmpty && !viewModel.isLoading {
+                } else if displayQuestions.isEmpty && !viewModel.isLoading {
                     Text("指定された条件の質問はありません。")
                         .foregroundColor(.secondary)
                         .padding()
                     Spacer()
                 } else {
-                    List(filteredQuestions) { question in
-                        NavigationLink(destination: QuestionDetailView(question: question).environmentObject(profileViewModel)) {
-                            VStack(alignment: .leading) {
-                                Text(question.title)
-                                    .font(.headline)
-                                HStack(spacing: 6) {
-                                    if let purpose = question.purpose, !purpose.isEmpty {
-                                        Text(purpose)
-                                            .font(.caption2)
+                    List {
+                        ForEach(displayQuestions) { question in
+                            // ★★★ 修正: ZStackを使って矢印(>)を消すテクニック ★★★
+                            ZStack(alignment: .leading) {
+                                // 1. 中身（見た目）
+                                VStack(alignment: .leading) {
+                                    Text(question.title)
+                                        .font(.headline)
+                                    HStack(spacing: 6) {
+                                        if let purpose = question.purpose, !purpose.isEmpty {
+                                            Text(purpose)
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(Color.green.opacity(0.15))
+                                                .clipShape(Capsule())
+                                        }
+                                        
+                                        Text("タグ: \(question.tags.joined(separator: ", "))")
+                                            .font(.caption)
                                             .foregroundColor(.secondary)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(Color.green.opacity(0.15))
-                                            .clipShape(Capsule())
                                     }
-                                    
-                                    Text("タグ: \(question.tags.joined(separator: ", "))")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
+                                }
+                                
+                                // 2. 透明なリンク（機能）
+                                NavigationLink(destination: QuestionDetailView(question: question).environmentObject(profileViewModel)) {
+                                    EmptyView()
+                                }
+                                .opacity(0) // 透明にする
+                            }
+                        }
+                        
+                        // ランダムモード時のみ表示する「リシャッフルボタン」
+                        if sortOption == .random {
+                            Section {
+                                Button(action: reshuffleRandomQuestions) {
+                                    HStack {
+                                        Spacer()
+                                        Image(systemName: "arrow.triangle.2.circlepath")
+                                        Text("別の5件を表示する")
+                                        Spacer()
+                                    }
+                                    .padding(.vertical, 8)
+                                    .foregroundColor(.blue)
                                 }
                             }
                         }
                     }
+                    .listStyle(.plain)
                 }
             }
             .navigationTitle("掲示板")
@@ -161,18 +193,24 @@ struct BoardView: View {
                                 HStack {
                                     Text("最新順")
                                     Spacer()
-                                    if sortOption == .newest {
-                                        Image(systemName: "checkmark")
-                                    }
+                                    if sortOption == .newest { Image(systemName: "checkmark") }
                                 }
                             }
                             Button(action: { sortOption = .oldest }) {
                                 HStack {
                                     Text("古い順")
                                     Spacer()
-                                    if sortOption == .oldest {
-                                        Image(systemName: "checkmark")
-                                    }
+                                    if sortOption == .oldest { Image(systemName: "checkmark") }
+                                }
+                            }
+                            Button(action: {
+                                sortOption = .random
+                                reshuffleRandomQuestions()
+                            }) {
+                                HStack {
+                                    Text("ランダム")
+                                    Spacer()
+                                    if sortOption == .random { Image(systemName: "checkmark") }
                                 }
                             }
                         } label: {
@@ -304,7 +342,16 @@ struct BoardView: View {
                 viewModel.setAuthViewModel(authViewModel)
                 await fetchFilteredQuestions()
             }
-            .refreshable { await fetchFilteredQuestions() }
+            .refreshable {
+                await fetchFilteredQuestions()
+                if sortOption == .random {
+                    reshuffleRandomQuestions()
+                }
+            }
+            .onChange(of: searchText) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
+            .onChange(of: selectedPurpose) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
+            .onChange(of: showingOnlyBookmarks) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
+            .onChange(of: selectedTags) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
         }
     }
 
@@ -312,6 +359,12 @@ struct BoardView: View {
         let purposeToFetch = selectedPurpose.isEmpty ? nil : selectedPurpose
         let bookmarkedByUserId: String? = (showingOnlyBookmarks && authViewModel.isSignedIn) ? authViewModel.userSub : nil
         await viewModel.fetchQuestions(purpose: purposeToFetch, bookmarkedBy: bookmarkedByUserId)
+    }
+    
+    private func reshuffleRandomQuestions() {
+        let pool = filteredPool
+        let shuffled = pool.shuffled()
+        randomQuestions = Array(shuffled.prefix(5))
     }
     
     private func addTagFromInput() {

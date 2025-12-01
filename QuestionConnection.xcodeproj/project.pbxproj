@@ -7,16 +7,35 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		91A859C9A414B098B08958CB /* Pods_QuestionConnection.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CC1F43672EA73C01C4288778 /* Pods_QuestionConnection.framework */; };
+		AC2712332EDD70A8007C9A64 /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AC2712322EDD70A8007C9A64 /* StoreKit.framework */; };
 		AC5067A52EA24AEA00661001 /* AWSCognitoIdentityProvider in Frameworks */ = {isa = PBXBuildFile; productRef = AC5067A42EA24AEA00661001 /* AWSCognitoIdentityProvider */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		1E2E3FA78BF601621A969673 /* Pods-QuestionConnection.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-QuestionConnection.debug.xcconfig"; path = "Target Support Files/Pods-QuestionConnection/Pods-QuestionConnection.debug.xcconfig"; sourceTree = "<group>"; };
+		AC2712322EDD70A8007C9A64 /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
 		AC50677E2EA2431700661001 /* QuestionConnection.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = QuestionConnection.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		CC1F43672EA73C01C4288778 /* Pods_QuestionConnection.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_QuestionConnection.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		FB15DC968C79187BF0ED9210 /* Pods-QuestionConnection.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-QuestionConnection.release.xcconfig"; path = "Target Support Files/Pods-QuestionConnection/Pods-QuestionConnection.release.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		AC27127E2EDD7533007C9A64 /* Exceptions for "QuestionConnection" folder in "QuestionConnection" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = AC50677D2EA2431700661001 /* QuestionConnection */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		AC5067802EA2431700661001 /* QuestionConnection */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				AC27127E2EDD7533007C9A64 /* Exceptions for "QuestionConnection" folder in "QuestionConnection" target */,
+			);
 			path = QuestionConnection;
 			sourceTree = "<group>";
 		};
@@ -28,17 +47,39 @@
 			buildActionMask = 2147483647;
 			files = (
 				AC5067A52EA24AEA00661001 /* AWSCognitoIdentityProvider in Frameworks */,
+				AC2712332EDD70A8007C9A64 /* StoreKit.framework in Frameworks */,
+				91A859C9A414B098B08958CB /* Pods_QuestionConnection.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		91F6FF77C8D3DE2064FB226E /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				1E2E3FA78BF601621A969673 /* Pods-QuestionConnection.debug.xcconfig */,
+				FB15DC968C79187BF0ED9210 /* Pods-QuestionConnection.release.xcconfig */,
+			);
+			path = Pods;
+			sourceTree = "<group>";
+		};
+		AC2712312EDD70A8007C9A64 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				AC2712322EDD70A8007C9A64 /* StoreKit.framework */,
+				CC1F43672EA73C01C4288778 /* Pods_QuestionConnection.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		AC5067752EA2431700661001 = {
 			isa = PBXGroup;
 			children = (
 				AC5067802EA2431700661001 /* QuestionConnection */,
+				AC2712312EDD70A8007C9A64 /* Frameworks */,
 				AC50677F2EA2431700661001 /* Products */,
+				91F6FF77C8D3DE2064FB226E /* Pods */,
 			);
 			sourceTree = "<group>";
 		};
@@ -57,9 +98,11 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = AC5067892EA2431800661001 /* Build configuration list for PBXNativeTarget "QuestionConnection" */;
 			buildPhases = (
+				E219A5624F4C0172AEB715B7 /* [CP] Check Pods Manifest.lock */,
 				AC50677A2EA2431700661001 /* Sources */,
 				AC50677B2EA2431700661001 /* Frameworks */,
 				AC50677C2EA2431700661001 /* Resources */,
+				6B61BACE20B7CAE7CDFE5B2E /* [CP] Copy Pods Resources */,
 			);
 			buildRules = (
 			);
@@ -122,6 +165,52 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		6B61BACE20B7CAE7CDFE5B2E /* [CP] Copy Pods Resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-QuestionConnection/Pods-QuestionConnection-resources-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			inputPaths = (
+			);
+			name = "[CP] Copy Pods Resources";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-QuestionConnection/Pods-QuestionConnection-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-QuestionConnection/Pods-QuestionConnection-resources.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		E219A5624F4C0172AEB715B7 /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-QuestionConnection-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		AC50677A2EA2431700661001 /* Sources */ = {
@@ -255,6 +344,7 @@
 		};
 		AC50678A2EA2431800661001 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 1E2E3FA78BF601621A969673 /* Pods-QuestionConnection.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -265,7 +355,9 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = WM7939G226;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = QuestionConnection/Info.plist;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "ボイスメッセージを録音・送信するためにマイクを使用します";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -298,6 +390,7 @@
 		};
 		AC50678B2EA2431800661001 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = FB15DC968C79187BF0ED9210 /* Pods-QuestionConnection.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -308,7 +401,9 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = WM7939G226;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = QuestionConnection/Info.plist;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "ボイスメッセージを録音・送信するためにマイクを使用します";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;

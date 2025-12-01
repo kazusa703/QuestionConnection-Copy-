@@ -1,111 +1,26 @@
 import SwiftUI
 
-// MARK: - QuizItemFormView
-struct QuizItemFormView: View {
-    @Binding var quizItem: QuizItem
-    var itemIndex: Int
-    var deleteAction: () -> Void
-    var canBeDeleted: Bool
-
-    var body: some View {
-        Section {
-            HStack {
-                Text("問題 \(itemIndex + 1)")
-                Spacer()
-                if canBeDeleted {
-                    Button(role: .destructive) {
-                        deleteAction()
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                    .buttonStyle(.borderless)
-                }
-            }
-
-            VStack(alignment: .leading) {
-                Text("問題文")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                ZStack(alignment: .topLeading) {
-                    TextEditor(text: $quizItem.questionText)
-                        .frame(height: 100)
-                    if quizItem.questionText.isEmpty {
-                        Text("クイズの問題文を入力してください")
-                            .foregroundColor(Color(UIColor.placeholderText))
-                            .padding(.top, 8).padding(.leading, 5)
-                            .allowsHitTesting(false)
-                    }
-                }
-                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color(UIColor.systemGray4), lineWidth: 1))
-            }
-
-            VStack(alignment: .leading) {
-                Text("選択肢（正解の選択肢の○をタップ）")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
-                // 丸ボタンを左にしてヒット領域を拡大
-                ForEach($quizItem.choices) { $choice in
-                    HStack(spacing: 8) {
-                        Button {
-                            quizItem.correctAnswerId = choice.id
-                        } label: {
-                            Image(systemName: choice.id == quizItem.correctAnswerId ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 20, weight: .regular))
-                                .foregroundColor(choice.id == quizItem.correctAnswerId ? .green : .secondary)
-                                .frame(width: 32, height: 32, alignment: .center)
-                                .contentShape(Rectangle())
-                                .accessibilityLabel("この選択肢を正解にする")
-                        }
-                        .buttonStyle(.plain)
-
-                        TextField("選択肢", text: $choice.text)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    .padding(.vertical, 2)
-                }
-            }
-
-            HStack {
-                if quizItem.choices.count < 4 {
-                    Button("選択肢を追加") {
-                        quizItem.choices.append(Choice(id: UUID().uuidString, text: ""))
-                    }
-                    .buttonStyle(.borderless)
-                }
-                Spacer()
-                if quizItem.choices.count > 2 {
-                    Button("選択肢を削除", role: .destructive) {
-                        if quizItem.correctAnswerId == quizItem.choices.last?.id {
-                            quizItem.correctAnswerId = ""
-                        }
-                        quizItem.choices.removeLast()
-                    }
-                    .buttonStyle(.borderless)
-                }
-            }
-        }
-    }
-}
-
 // MARK: - CreateQuestionView
 struct CreateQuestionView: View {
     @StateObject private var viewModel = QuestionViewModel()
     @EnvironmentObject private var authViewModel: AuthViewModel
+    
+    // ★ SubscriptionManager に修正
+    @EnvironmentObject private var subscriptionManager: SubscriptionManager
+    
     @Environment(\.showAuthenticationSheet) private var showAuthenticationSheet
     
+    private let adManager = InterstitialAdManager()
+    
     @State private var title = ""
-    @State private var purpose = "" // 目的
-    
-    // --- ★ 1. タグの @State を置き換え ---
-    @State private var tagInput: String = ""
+    @State private var purpose = ""
+    @State private var tagInput = ""
     @State private var tags: [String] = []
-    // --- ★ 修正完了 (1) ---
-    
     @State private var remarks = ""
-    @State private var dmInviteMessage = "" // 全問正解者向けメッセージ（任意）
+    @State private var dmInviteMessage = ""
+    
     @State private var quizItems: [QuizItem] = [
-        QuizItem(id: UUID().uuidString, questionText: "", choices: [
+        QuizItem(id: UUID().uuidString, type: .choice, questionText: "", choices: [
             Choice(id: UUID().uuidString, text: ""),
             Choice(id: UUID().uuidString, text: "")
         ], correctAnswerId: "")
@@ -113,262 +28,297 @@ struct CreateQuestionView: View {
     
     @State private var showAlert = false
     @State private var alertMessage = ""
+    @State private var isAdLoading = false
     
-    // (isPostButtonDisabled は変更なし)
-    private var isPostButtonDisabled: Bool {
-        return viewModel.isLoading || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    // バナー広告の表示制御
+    var shouldShowBanner: Bool {
+        !subscriptionManager.isPremium
     }
-    
+
     var body: some View {
         NavigationStack {
-            Form {
-                Section(header: Text("質問の基本情報")) {
-                    VStack(alignment: .leading) {
-                        Text("題名").font(.caption).foregroundColor(.secondary)
-                        TextField("掲示板に表示されるタイトル", text: $title)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    
-                    VStack(alignment: .leading) {
-                        Text("目的").font(.caption).foregroundColor(.secondary)
-                        Picker("目的を選択", selection: $purpose) {
-                            Text("選択なし").tag("")
-                            ForEach(viewModel.availablePurposes, id: \.self) { p in
-                                Text(p).tag(p)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .tint(.primary)
-                    }
-                    
-                    // --- ★ 2. タグ入力UIの変更 ---
-                    VStack(alignment: .leading) {
-                        Text("タグ（5個まで）").font(.caption).foregroundColor(.secondary)
-                        HStack {
-                            TextField("タグを入力して「追加」", text: $tagInput)
-                                .textFieldStyle(.roundedBorder)
-                            Button("追加") {
-                                addTag()
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(tagInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || tags.count >= 5)
-                        }
-                        
-                        // 追加されたタグを表示するScrollView
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack {
-                                ForEach(tags, id: \.self) { tag in
-                                    HStack(spacing: 4) {
-                                        Text(tag)
-                                        Button {
-                                            removeTag(tag)
-                                        } label: {
-                                            Image(systemName: "xmark.circle.fill")
-                                        }
-                                    }
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 5)
-                                    .background(Color.blue.opacity(0.1))
-                                    .clipShape(Capsule())
-                                    .buttonStyle(.plain) // ボタンのスタイルをリセット
-                                }
-                            }
-                            .padding(.top, 5) // タグ入力欄との間に少し余白
-                        }
-                        .frame(minHeight: (tags.isEmpty ? 0 : 35)) // タグがない場合は高さを0に
-                    }
-                    // --- ★ 修正完了 (2) ---
-                    
-                    VStack(alignment: .leading) {
-                        Text("備考・説明").font(.caption).foregroundColor(.secondary)
-                        ZStack(alignment: .topLeading) {
-                            TextEditor(text: $remarks).frame(height: 100)
-                            if remarks.isEmpty {
-                                Text("任意").foregroundColor(Color(UIColor.placeholderText))
-                                    .padding(.top, 8).padding(.leading, 5)
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color(UIColor.systemGray4), lineWidth: 1))
-                    }
-                    
-                    // ここが追加の入力欄
-                    VStack(alignment: .leading) {
-                        Text("全問正解者へのメッセージ（任意）").font(.caption).foregroundColor(.secondary)
-                        ZStack(alignment: .topLeading) {
-                            TextEditor(text: $dmInviteMessage).frame(height: 80)
-                            if dmInviteMessage.isEmpty {
-                                Text("例: 全問正解おめでとう！DMください")
-                                    .foregroundColor(Color(UIColor.placeholderText))
-                                    .padding(.top, 8).padding(.leading, 5)
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color(UIColor.systemGray4), lineWidth: 1))
-                    }
+            VStack(spacing: 0) {
+                // バナー広告
+                if shouldShowBanner {
+                    AdBannerView()
+                        .frame(height: 50)
+                        .background(Color.gray.opacity(0.1))
                 }
                 
-                ForEach($quizItems.indices, id: \.self) { index in
-                    QuizItemFormView(
-                        quizItem: $quizItems[index],
-                        itemIndex: index,
-                        deleteAction: { deleteQuizItem(at: index) },
-                        canBeDeleted: quizItems.count > 1
-                    )
-                }
-                
-                HStack {
-                    if quizItems.count < 5 {
-                        Button("問題を追加") { addQuizItem() }
-                            .buttonStyle(.borderless)
-                    }
-                    Spacer()
-                }
-                
-                Section {
-                    Button {
-                        if authViewModel.isSignedIn {
-                            postQuestion()
-                        } else {
-                            showAuthenticationSheet.wrappedValue = true
-                        }
-                    } label: {
-                        HStack {
-                            Spacer()
-                            if viewModel.isLoading {
-                                ProgressView()
-                            } else {
-                                Text(authViewModel.isSignedIn ? "投稿する" : "ログインして投稿")
-                            }
-                            Spacer()
-                        }
-                    }
-                    .disabled(isPostButtonDisabled)
+                Form {
+                    // ★ 部品に分けました（コンパイルエラー対策）
+                    basicInfoSection
+                    quizItemsSection
+                    submitButtonSection
                 }
             }
-            .navigationTitle("新しい質問を作成")
-            .alert("QuestionConnection", isPresented: $showAlert) {
-                Button("OK") { }
+            .navigationTitle("作成")
+            .navigationBarTitleDisplayMode(.inline)
+            .alert("通知", isPresented: $showAlert) {
+                Button("OK") {}
             } message: {
                 Text(alertMessage)
             }
             .task {
                 viewModel.setAuthViewModel(authViewModel)
+                adManager.loadAd()
             }
         }
     }
     
-    private func addQuizItem() {
-        quizItems.append(QuizItem(id: UUID().uuidString, questionText: "", choices: [
-            Choice(id: UUID().uuidString, text: ""),
-            Choice(id: UUID().uuidString, text: "")
-        ], correctAnswerId: ""))
-    }
-    
-    private func deleteQuizItem(at index: Int) {
-        guard quizItems.count > 1 else { return }
-        guard index < quizItems.count else { return }
-        quizItems.remove(at: index)
-    }
-    
-    // --- ★ 3. 提案されたヘルパー関数を追加 ---
-    // タグ追加処理
-    private func addTag() {
-        let trimmedTag = tagInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        // タグの上限（5個まで）
-        guard !trimmedTag.isEmpty, !tags.contains(trimmedTag), tags.count < 5 else {
-            tagInput = "" // 上限の場合も入力欄はクリア
-            return
-        }
-        tags.append(trimmedTag)
-        tagInput = ""
-    }
-    
-    // タグ削除処理
-    private func removeTag(_ tag: String) {
-        tags.removeAll { $0 == tag }
-    }
-    // --- ★ 修正完了 (3) ---
-    
-    private func postQuestion() {
-        guard let authorId = authViewModel.userSub else {
-            alertMessage = "ユーザー情報が見つかりません。再ログインしてください。"
-            showAlert = true
-            return
-        }
-        
-        if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            alertMessage = "題名を入力してください。"
-            showAlert = true
-            return
-        }
-        
-        // (目的のバリデーション削除は反映済み)
-        
-        for (index, item) in quizItems.enumerated() {
-            if item.questionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                alertMessage = "問題 \(index + 1) の問題文が空です。"
-                showAlert = true
-                return
+    // --- 1. 基本情報セクション ---
+    private var basicInfoSection: some View {
+        Section(header: Text("質問の基本情報")) {
+            TextField("題名", text: $title)
+            
+            Picker("目的", selection: $purpose) {
+                Text("選択なし").tag("")
+                ForEach(viewModel.availablePurposes, id: \.self) { p in
+                    Text(p).tag(p)
+                }
             }
-            if item.choices.count < 2 {
-                alertMessage = "問題 \(index + 1) の選択肢は2つ以上必要です。"
-                showAlert = true
-                return
+            
+            HStack {
+                TextField("タグ (追加)", text: $tagInput)
+                Button("追加") {
+                    if !tagInput.isEmpty && tags.count < 5 {
+                        tags.append(tagInput)
+                        tagInput = ""
+                    }
+                }
             }
-            if item.correctAnswerId.isEmpty || !item.choices.contains(where: { $0.id == item.correctAnswerId }) {
-                alertMessage = "問題 \(index + 1) の正解が選択されていません。"
-                showAlert = true
-                return
+            if !tags.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack {
+                        ForEach(tags, id: \.self) { tag in
+                            Text(tag).padding(5).background(Color.blue.opacity(0.1)).cornerRadius(5)
+                        }
+                    }
+                }
             }
-            for (choiceIndex, choice) in item.choices.enumerated() {
-                if choice.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    alertMessage = "問題 \(index + 1) の選択肢 \(choiceIndex + 1) が空です。"
-                    showAlert = true
-                    return
+            
+            TextField("備考・説明", text: $remarks)
+            TextField("全問正解者へのメッセージ", text: $dmInviteMessage)
+        }
+    }
+    
+    // --- 2. 問題作成セクション ---
+    private var quizItemsSection: some View {
+        ForEach($quizItems.indices, id: \.self) { index in
+            Section(header: Text("問題 \(index + 1)")) {
+                Picker("形式", selection: $quizItems[index].type) {
+                    Text("選択式").tag(QuizType.choice)
+                    Text("穴埋め").tag(QuizType.fillIn)
+                    Text("記述式").tag(QuizType.essay)
+                }
+                .pickerStyle(.segmented)
+                
+                // タイプごとのエディタ呼び出し
+                if quizItems[index].type == .choice {
+                    ChoiceQuestionEditor(item: $quizItems[index])
+                } else if quizItems[index].type == .fillIn {
+                    FillInQuestionEditor(item: $quizItems[index])
+                } else {
+                    EssayQuestionEditor(item: $quizItems[index])
+                }
+                
+                if quizItems.count > 1 {
+                    Button("この問題を削除", role: .destructive) {
+                        quizItems.remove(at: index)
+                    }
                 }
             }
         }
+    }
+    
+    // --- 3. 投稿ボタンセクション ---
+    private var submitButtonSection: some View {
+        Group {
+            Button("問題を追加") {
+                quizItems.append(QuizItem(id: UUID().uuidString, type: .choice, questionText: ""))
+            }
+            
+            Section {
+                Button {
+                    if authViewModel.isSignedIn {
+                        handlePostButtonTap()
+                    } else {
+                        showAuthenticationSheet.wrappedValue = true
+                    }
+                } label: {
+                    HStack {
+                        Spacer()
+                        if viewModel.isLoading || isAdLoading {
+                            ProgressView()
+                        } else {
+                            Text(authViewModel.isSignedIn ? "投稿する" : "ログインして投稿")
+                                .fontWeight(.bold)
+                        }
+                        Spacer()
+                    }
+                }
+                .disabled(title.isEmpty || viewModel.isLoading || isAdLoading)
+            }
+        }
+    }
+    
+    private func handlePostButtonTap() {
+        if title.isEmpty { return }
         
-        // --- ★ 4. tagsArray の作成ロジックを削除 (変更済み) ---
-        
+        if subscriptionManager.isPremium {
+            executePost()
+        } else {
+            isAdLoading = true
+            adManager.showAd {
+                isAdLoading = false
+                executePost()
+            }
+        }
+    }
+    
+    private func executePost() {
         Task {
+            guard let uid = authViewModel.userSub else { return }
             let success = await viewModel.createQuestion(
-                title: title.trimmingCharacters(in: .whitespacesAndNewlines),
-                // ★ 5. @State の `tags` をそのまま渡す ★
+                title: title,
                 tags: tags,
-                remarks: remarks.trimmingCharacters(in: .whitespacesAndNewlines),
-                authorId: authorId,
+                remarks: remarks,
+                authorId: uid,
                 quizItems: quizItems,
-                purpose: purpose, // そのまま渡す (空文字列 or 値)
-                dmInviteMessage: dmInviteMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : dmInviteMessage
+                purpose: purpose,
+                dmInviteMessage: dmInviteMessage
             )
             
-            // --- ★★★ ここから修正 ★★★ ---
-            // UIの更新を MainActor (メインスレッド) で実行する
             await MainActor.run {
                 if success {
-                    alertMessage = "質問を投稿しました！"
-                    // フォームをリセット
-                    title = ""
-                    purpose = ""
-                    tags = []
-                    tagInput = ""
-                    remarks = ""
-                    dmInviteMessage = ""
-                    quizItems = [QuizItem(
-                        id: UUID().uuidString,
-                        questionText: "",
-                        choices: [Choice(id: UUID().uuidString, text: ""), Choice(id: UUID().uuidString, text: "")],
-                        correctAnswerId: ""
-                    )]
+                    alertMessage = "投稿しました！"
+                    title = ""; tags = []; quizItems = [QuizItem(id: UUID().uuidString, type: .choice, questionText: "")]
                 } else {
-                    alertMessage = "投稿に失敗しました。しばらくしてからもう一度お試しください。"
+                    alertMessage = "投稿に失敗しました。"
                 }
                 showAlert = true
             }
-            // --- ★★★ 修正ここまで ★★★ ---
+        }
+    }
+}
+
+// MARK: - 各問題タイプのエディタ部品
+// ★ ここから下が「Cannot find...」の原因だった部分です。必ず含めてください。
+
+// 1. 選択式エディタ
+struct ChoiceQuestionEditor: View {
+    @Binding var item: QuizItem
+    
+    var body: some View {
+        TextField("問題文", text: $item.questionText)
+        
+        ForEach($item.choices) { $choice in
+            HStack {
+                Button {
+                    item.correctAnswerId = choice.id
+                } label: {
+                    Image(systemName: item.correctAnswerId == choice.id ? "checkmark.circle.fill" : "circle")
+                }
+                TextField("選択肢", text: $choice.text)
+            }
+        }
+        
+        Button("選択肢を追加") {
+            item.choices.append(Choice(id: UUID().uuidString, text: ""))
+        }
+    }
+}
+
+// 2. 穴埋めエディタ
+struct FillInQuestionEditor: View {
+    @Binding var item: QuizItem
+    @State private var tempText: String = ""
+    
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text("文章を作成し、[穴]ボタンでカーソル位置に穴を挿入します。")
+                .font(.caption).foregroundColor(.secondary)
+            
+            HStack {
+                TextField("文章を入力...", text: $tempText)
+                    .textFieldStyle(.roundedBorder)
+                
+                Button("穴") {
+                    insertHole()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            
+            Text("プレビュー: " + tempText)
+                .font(.body)
+                .padding(.vertical, 4)
+            
+            Divider()
+            
+            Text("正解を入力してください").font(.caption)
+            ForEach(Array(item.fillInAnswers.keys.sorted()), id: \.self) { key in
+                HStack {
+                    Text(key)
+                    TextField("正解", text: Binding(
+                        get: { item.fillInAnswers[key] ?? "" },
+                        set: { item.fillInAnswers[key] = $0 }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                }
+            }
+        }
+        .onAppear {
+            tempText = item.questionText
+        }
+        .onChange(of: tempText) { _, newValue in
+            item.questionText = newValue
+            syncAnswers()
+        }
+    }
+    
+    func insertHole() {
+        let holeCount = item.fillInAnswers.count + 1
+        let holeTag = "[穴\(holeCount)]"
+        tempText += holeTag
+    }
+    
+    func syncAnswers() {
+        let pattern = "\\[(穴\\d+)\\]"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
+        let matches = regex.matches(in: tempText, range: NSRange(tempText.startIndex..., in: tempText))
+        
+        var foundKeys = Set<String>()
+        for match in matches {
+            if let range = Range(match.range(at: 1), in: tempText) {
+                let key = String(tempText[range])
+                foundKeys.insert(key)
+                if item.fillInAnswers[key] == nil {
+                    item.fillInAnswers[key] = ""
+                }
+            }
+        }
+        item.fillInAnswers = item.fillInAnswers.filter { foundKeys.contains($0.key) }
+    }
+}
+
+// 3. 記述式エディタ
+struct EssayQuestionEditor: View {
+    @Binding var item: QuizItem
+    
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text("問題文")
+            TextEditor(text: $item.questionText)
+                .frame(height: 100)
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.gray.opacity(0.5)))
+            
+            Text("模範解答（採点の参考に表示されます）")
+            TextEditor(text: Binding(
+                get: { item.modelAnswer ?? "" },
+                set: { item.modelAnswer = $0 }
+            ))
+            .frame(height: 100)
+            .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.gray.opacity(0.5)))
         }
     }
 }

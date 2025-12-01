@@ -26,7 +26,6 @@ struct DMListView: View {
         case favorite
     }
 
-    // ★★★ 修正: [DMThread] に型指定 ★★★
     private var filteredThreads: [DMThread] {
         guard let myUserId = authViewModel.userSub else { return [] }
 
@@ -77,7 +76,6 @@ struct DMListView: View {
         return f2.date(from: isoString)
     }
 
-    // ★★★ 修正: [DMThread] に型指定 ★★★
     private func applyTabFilter(_ threads: [DMThread], myUserId: String) -> [DMThread] {
         switch selectedTab {
         case .all:
@@ -213,11 +211,9 @@ struct DMListView: View {
                 Spacer()
             } else {
                 List(filteredThreads) { thread in
-                    NavigationLink(
-                        destination: ConversationView(thread: thread, viewModel: dmViewModel)
-                            .environmentObject(authViewModel)
-                            .environmentObject(profileViewModel)
-                    ) {
+                    // ★★★ 修正: ZStackを使って矢印(>)を消すテクニック ★★★
+                    ZStack(alignment: .leading) {
+                        // 1. 中身
                         DMListRowView(
                             thread: thread,
                             profileViewModel: profileViewModel,
@@ -225,9 +221,18 @@ struct DMListView: View {
                             lastMessagePreview: lastMessageCache[thread.threadId]?.text
                         )
                         .environmentObject(authViewModel)
+                        
+                        // 2. 透明なリンク
+                        NavigationLink(
+                            destination: ConversationView(thread: thread, viewModel: dmViewModel)
+                                .environmentObject(authViewModel)
+                                .environmentObject(profileViewModel)
+                        ) {
+                            EmptyView()
+                        }
+                        .opacity(0)
                     }
                     .contextMenu {
-                        // お気に入りボタン
                         Button {
                             toggleFavorite(threadId: thread.threadId)
                         } label: {
@@ -238,7 +243,6 @@ struct DMListView: View {
                             }
                         }
                         
-                        // ★★★ 修正: 削除ボタンの書き方を明示的に変更 ★★★
                         Button(role: .destructive) {
                             deleteThread(threadId: thread.threadId)
                         } label: {
@@ -289,7 +293,6 @@ struct DMListView: View {
         }
     }
 
-    // ★★★ 修正: [DMThread] に型指定 ★★★
     private func fetchAllNicknames(for threads: [DMThread]) async {
         guard let myUserId = authViewModel.userSub else { return }
         let opponentIds = Set(
@@ -301,7 +304,6 @@ struct DMListView: View {
         }
     }
     
-    // ★★★ 修正: [DMThread] に型指定 ★★★
     private func fetchLastMessagesForThreads(_ threads: [DMThread]) async {
         guard let idToken = await authViewModel.getValidIdToken() else {
             print("fetchLastMessages: トークン取得失敗")

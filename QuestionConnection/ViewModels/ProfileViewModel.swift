@@ -29,6 +29,65 @@ struct BlocklistResponse: Decodable {
     let blockedUserIds: [String]
 }
 
+// --- ★★★ 採点機能用モデル ★★★ ---
+struct AnswerLogItem: Codable, Identifiable {
+    let logId: String
+    let userId: String
+    var status: String // pending_review, approved, rejected, completed
+    let score: Int
+    let total: Int
+    let updatedAt: String
+    let details: [AnswerDetail]
+    
+    var id: String { logId }
+}
+
+struct AnswerDetail: Codable, Identifiable {
+    let itemId: String
+    let type: String // choice, fillIn, essay
+    let userAnswer: UserAnswerValue? // 柔軟に対応
+    let isCorrect: Bool
+    let status: String
+    
+    var id: String { itemId }
+}
+
+// 回答値はStringの場合とDictionaryの場合があるので柔軟に受ける
+enum UserAnswerValue: Codable {
+    case string(String)
+    case dictionary([String: String])
+    case none
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let x = try? container.decode(String.self) {
+            self = .string(x)
+            return
+        }
+        if let x = try? container.decode([String: String].self) {
+            self = .dictionary(x)
+            return
+        }
+        self = .none
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let x): try container.encode(x)
+        case .dictionary(let x): try container.encode(x)
+        case .none: try container.encodeNil()
+        }
+    }
+    
+    var displayString: String {
+        switch self {
+        case .string(let s): return s
+        case .dictionary(let d): return d.map { "\($0.key): \($0.value)" }.joined(separator: "\n")
+        case .none: return "(回答なし)"
+        }
+    }
+}
 
 @MainActor
 class ProfileViewModel: ObservableObject {
@@ -58,7 +117,6 @@ class ProfileViewModel: ObservableObject {
     
     @Published var isLoadingSettings: Bool = false
 
-
     // (キャッシュ戦略 ... 変更なし)
     @Published var userNicknames: [String: String] = [:] // キャッシュ
     @Published var userProfileImages: [String: String] = [:]
@@ -67,18 +125,22 @@ class ProfileViewModel: ObservableObject {
     @Published var showProfileImageAlert = false
     @Published var isUploadingProfileImage = false
     
-    // ★★★ 追加：残り変更回数と現在の変更回数 ★★★
+    // ☆☆☆ 追加：残り変更回数と現在の変更回数 ☆☆☆
     @Published var remainingProfileImageChanges: Int = 2
     @Published var profileImageChangedCount: Int = 0
+
+    // --- ★★★ 採点機能用に追加 ★★★ ---
+    @Published var answerLogs: [AnswerLogItem] = []
+    @Published var isLoadingAnswers = false
+    @Published var isJudging = false
 
     private var inFlightNicknameTasks: [String: Task<String, Never>] = [:]
     private var failedAt: [String: Date] = [:]
     private let retryCooldown: TimeInterval = 60
 
-
-    // ★★★ 修正：public に変更 (private を削除) ★★★
+    // ☆☆☆ 修正：public に変更 (private を削除) ☆☆☆
     let usersApiEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/users")!
-    private let questionsApiEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/questions")!
+    let questionsApiEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/questions")!
     private let authViewModel: AuthViewModel
 
     init(authViewModel: AuthViewModel) {
@@ -89,6 +151,78 @@ class ProfileViewModel: ObservableObject {
                 await fetchBlocklist()
                 await checkAndRegisterPendingDeviceToken()
             }
+        }
+    }
+
+    // --- ★★★ 採点機能用に追加 ★★★ ---
+    // 回答一覧を取得
+    func fetchAnswerLogs(questionId: String) async {
+        guard !questionId.isEmpty else { return }
+        isLoadingAnswers = true
+        // ★ API Gatewayのエンドポイントに合わせて修正してください
+        // 例: .../questions/{questionId}/answers
+        let url = questionsApiEndpoint.appendingPathComponent(questionId).appendingPathComponent("answers")
+        
+        do {
+            guard let idToken = await authViewModel.getValidIdToken() else { return }
+            var request = URLRequest(url: url)
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                print("回答一覧取得エラー: \(response)")
+                isLoadingAnswers = false
+                return
+            }
+            
+            let logs = try JSONDecoder().decode([AnswerLogItem].self, from: data)
+            self.answerLogs = logs
+        } catch {
+            print("回答一覧取得失敗: \(error)")
+        }
+        isLoadingAnswers = false
+    }
+
+    // 採点実行 (正解/不正解)
+    func judgeAnswer(logId: String, isApproved: Bool) async -> Bool {
+        guard !logId.isEmpty, let authorId = authViewModel.userSub else { return false }
+        isJudging = true
+        
+        let urlString = "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/answers/judge" // ★ judgeAnswerFunction用のURL
+        guard let url = URL(string: urlString) else { return false }
+        
+        do {
+            guard let idToken = await authViewModel.getValidIdToken() else { return false }
+            
+            let body: [String: Any] = [
+                "authorId": authorId,
+                "logId": logId,
+                "isApproved": isApproved
+            ]
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                isJudging = false
+                return false
+            }
+            
+            // ローカルのデータを更新して即反映
+            if let index = answerLogs.firstIndex(where: { $0.logId == logId }) {
+                answerLogs[index].status = isApproved ? "approved" : "rejected"
+            }
+            isJudging = false
+            return true
+            
+        } catch {
+            print("採点エラー: \(error)")
+            isJudging = false
+            return false
         }
     }
 
@@ -116,7 +250,7 @@ class ProfileViewModel: ObservableObject {
                 isDeletingQuestion = false
                 return false
             }
-            print("質問削除API成功: \(questionId)")
+            print("質問削除APIサクセス: \(questionId)")
             myQuestions.removeAll { $0.questionId == questionId }
             isDeletingQuestion = false
             return true
@@ -182,7 +316,7 @@ class ProfileViewModel: ObservableObject {
                 bookmarkedQuestionIds.remove(questionId)
                 return
             }
-            print("ブックマーク追加API成功: \(questionId)")
+            print("ブックマーク追加APIサクセス: \(questionId)")
         } catch {
             print("ブックマーク追加APIリクエストエラー: \(error)")
             bookmarkedQuestionIds.remove(questionId)
@@ -212,7 +346,7 @@ class ProfileViewModel: ObservableObject {
                 bookmarkedQuestionIds.insert(questionId)
                 return
             }
-            print("ブックマーク削除API成功: \(questionId)")
+            print("ブックマーク削除APIサクセス: \(questionId)")
         } catch {
             print("ブックマーク削除APIリクエストエラー: \(error)")
             bookmarkedQuestionIds.insert(questionId)
@@ -225,7 +359,7 @@ class ProfileViewModel: ObservableObject {
         Task {
             await fetchBookmarks()
             await fetchBlocklist()
-            await checkAndRegisterPendingDeviceToken() // ★ サインイン時にも呼び出す
+            await checkAndRegisterPendingDeviceToken() // ☆ サインイン時にも呼び出す
         }
     }
     func handleSignOut() {
@@ -234,14 +368,14 @@ class ProfileViewModel: ObservableObject {
         myQuestions = []
         userStats = nil
         userNicknames = [:]
-        userProfileImages = [:] // ★ キャッシュクリア
+        userProfileImages = [:] // ☆ キャッシュクリア
         failedAt = [:]
         inFlightNicknameTasks.values.forEach { $0.cancel() }
         inFlightNicknameTasks = [:]
         print("ローカルの全キャッシュと進行中タスクをクリアしました。")
     }
     
-    // ★★★ "deviceToken" (単数形) を呼び出すように修正済み ★★★
+    // ☆☆☆ "deviceToken" (単数形) を呼び出すように修正済み ☆☆☆
     func registerDeviceToken(deviceTokenString: String) async {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else {
             print("デバイストークン登録: 未ログインのためスキップ")
@@ -249,7 +383,7 @@ class ProfileViewModel: ObservableObject {
         }
         print("デバイストークンをサーバーに登録開始...")
         
-        // ★★★ "deviceToken" (単数形) になっていることを確認！ ★★★
+        // ☆☆☆ "deviceToken" (単数形) になっていることを確認 ☆☆☆
         let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("deviceToken")
         
         do {
@@ -266,7 +400,7 @@ class ProfileViewModel: ObservableObject {
             
             let (_, response) = try await URLSession.shared.data(for: request)
             
-            // ★ POST/PUT の成功は 200 (OK) または 201 (Created) が一般的
+            // ☆ POST/PUT の成功は 200 (OK) または 201 (Created) が一般的
             guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
                 print("デバイストークン登録APIエラー: \(response)")
                 return
@@ -278,7 +412,7 @@ class ProfileViewModel: ObservableObject {
         }
     }
 
-    // ★★★ 新しい関数を追加 ★★★
+    // ☆☆☆ 新しい関数を追加 ☆☆☆
     /// UserDefaults に保留中のデバイストークンがあれば登録する
     func checkAndRegisterPendingDeviceToken() async {
         if let token = UserDefaults.standard.string(forKey: "pendingDeviceToken") {
@@ -287,7 +421,7 @@ class ProfileViewModel: ObservableObject {
             // 自分の registerDeviceToken 関数を呼び出す
             await registerDeviceToken(deviceTokenString: token)
             
-            // 処理が成功したかどうかにかかわらず、
+            // 処理がサクセスしたかどうかにかかわらず、
             // サーバーへの登録を「試行」したので、保留中トークンは削除する
             UserDefaults.standard.removeObject(forKey: "pendingDeviceToken")
             print("保留中のデバイストークンを処理しました。")
@@ -297,17 +431,17 @@ class ProfileViewModel: ObservableObject {
     // (fetchNickname, requestNicknameFromAPI ... 変更なし)
     func fetchNickname(userId: String) async -> String {
         if let cached = userNicknames[userId] {
-            print("ニックネーム(ID: \(userId))をキャッシュから取得: \(cached)")
-            return cached.isEmpty ? "（未設定）" : cached // ★ UI表示用に変換
+            print("ニックネーム (ID: \(userId))をキャッシュから取得: \(cached)")
+            return cached.isEmpty ? "（未設定）" : cached // ☆ UI表示用に変更
         }
         if let lastFailed = failedAt[userId], Date().timeIntervalSince(lastFailed) < retryCooldown {
-            print("ニックネーム(ID: \(userId)): クールダウン中のためスキップ")
-            return "(削除されたユーザー)" // ★ UI表示用に変換
+            print("ニックネーム (ID: \(userId)): クールダウン中のためスキップ")
+            return "(削除されたユーザー)" // ☆ UI表示用に変更
         }
         if let task = inFlightNicknameTasks[userId] {
-            print("ニックネーム(ID: \(userId)): 進行中のタスクを待機")
+            print("ニックネーム (ID: \(userId)): 進行中のタスクを待機")
             let name = await task.value
-            return name.isEmpty ? "(削除されたユーザー)" : name // ★ UI表示用に変換
+            return name.isEmpty ? "(削除されたユーザー)" : name // ☆ UI表示用に変更
         }
         guard !userId.isEmpty else { return "不明" }
         let task = Task<String, Never> { [weak self] in
@@ -316,21 +450,21 @@ class ProfileViewModel: ObservableObject {
             return name ?? ""
         }
         inFlightNicknameTasks[userId] = task
-        print("ニックネーム(ID: \(userId)): 新規タスク開始")
+        print("ニックネーム (ID: \(userId)): 新規タスク開始")
         let name = await task.value
         self.userNicknames[userId] = name
         inFlightNicknameTasks.removeValue(forKey: userId)
         if name.isEmpty {
-            print("ニックネーム(ID: \(userId)): 取得結果が空のため失敗として記録")
+            print("ニックネーム (ID: \(userId)): 取得結果が空のため失敗として記録")
             failedAt[userId] = Date()
             return name.isEmpty ? "(削除されたユーザー)" : name
         } else {
             failedAt.removeValue(forKey: userId)
-            return name // ★ UI表示用に変換
+            return name // ☆ UI表示用に変更
         }
     }
     
-    // --- ★★★ 修正した fetchNicknameAndImage ★★★ ---
+    // --- ☆☆☆ 修正した fetchNicknameAndImage ☆☆☆
     /// ニックネームとプロフィール画像を一緒に取得
     func fetchNicknameAndImage(userId: String) async -> (nickname: String, imageUrl: String?) {
         // キャッシュ確認
@@ -338,7 +472,7 @@ class ProfileViewModel: ObservableObject {
             return (cached, userProfileImages[userId])
         }
         
-        // ★★★ 修正：/users/{userId} エンドポイントを使用 ★★★
+        // ☆☆☆ 修正：/users/{userId} エンドポイントを使用 ☆☆☆
         let endpoint = "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/users/\(userId)"
         
         guard let url = URL(string: endpoint) else {
@@ -349,14 +483,14 @@ class ProfileViewModel: ObservableObject {
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
             
-            // ★★★ 追加：トークンを含める ★★★
+            // ☆☆☆ 追加：トークンを含める ☆☆☆
             if let token = await authViewModel.getValidIdToken() {
                 request.setValue(token, forHTTPHeaderField: "Authorization")
             }
             
             let (data, response) = try await URLSession.shared.data(for: request)
             
-            // ★★★ デバッグ出力 ★★★
+            // ☆☆☆ デバッグ出力 ☆☆☆
             if let httpResponse = response as? HTTPURLResponse {
                 print("fetchNicknameAndImage response status: \(httpResponse.statusCode)")
             }
@@ -368,7 +502,7 @@ class ProfileViewModel: ObservableObject {
             let nickname = profile.nickname ?? "（未設定）"
             let imageUrl = profile.profileImageUrl
             
-            // ★★★ メインスレッドで更新 ★★★
+            // ☆☆☆ メインスレッドで更新 ☆☆☆
             await MainActor.run {
                 self.userNicknames[userId] = nickname
                 if let imageUrl = imageUrl {
@@ -388,9 +522,9 @@ class ProfileViewModel: ObservableObject {
             return ("不明", nil)
         }
     }
-    // --- ★★★ 修正ここまで ★★★ ---
+    // --- ☆☆☆ 修正ここまで ☆☆☆ ---
     
-    // --- ★★★ 追加：プロフィール画像をアップロード（詳細版・修正版） ★★★ ---
+    // --- ☆☆☆ 追加：プロフィール画像をアップロード（詳細版・修正版） ☆☆☆ ---
     func uploadProfileImage(userId: String, image: UIImage) async {
         guard let idToken = await authViewModel.getValidIdToken() else {
             profileImageAlertMessage = "認証に失敗しました。"
@@ -407,14 +541,14 @@ class ProfileViewModel: ObservableObject {
             return
         }
         
-        // ★ パスを修正: /users/{userId}/profileImage (POST) を想定
+        // ☆ パスを修正: /users/{userId}/profileImage (POST) を想定
         let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("profileImage")
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
         
-        // ★★★ マルチパートフォームデータでアップロード ★★★
+        // ☆☆☆ マルチパートフォームデータでアップロード ☆☆☆
         let boundary = UUID().uuidString
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         
@@ -435,7 +569,7 @@ class ProfileViewModel: ObservableObject {
             if let httpResponse = response as? HTTPURLResponse {
                 print("プロフィール画像アップロード: Status Code \(httpResponse.statusCode)")
                 
-                // ★★★ UI更新はメインスレッドで ★★★
+                // ☆☆☆ UI更新はメインスレッドで ☆☆☆
                 await MainActor.run {
                     switch httpResponse.statusCode {
                     case 200...299:
@@ -447,14 +581,14 @@ class ProfileViewModel: ObservableObject {
                                 print("✅ プロフィール画像URL: \(imageUrl)")
                             }
                             
-                            // ★★★ レスポンスから残り変更回数を取得 ★★★
+                            // ☆☆☆ レスポンスから残り変更回数を取得 ☆☆☆
                             if let changeCount = json["changeCount"] as? Int,
                                let maxChanges = json["maxChanges"] as? Int {
                                 self.profileImageChangedCount = changeCount
                                 self.remainingProfileImageChanges = maxChanges - changeCount
                             }
                             
-                            self.profileImageAlertMessage = "プロフィール画像をアップロードしました！"
+                            self.profileImageAlertMessage = "プロフィール画像をアップロードしました✓"
                             self.showProfileImageAlert = true
                         } else {
                             self.profileImageAlertMessage = "アップロードに成功しました（URL取得失敗）"
@@ -462,7 +596,7 @@ class ProfileViewModel: ObservableObject {
                         }
                         
                     case 403:
-                        // ★★★ 403 の場合は最大値に達した ★★★
+                        // ☆☆☆ 403 の場合は最大値に達した ☆☆☆
                         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                             if let changeCount = json["changeCount"] as? Int,
                                let maxChanges = json["maxChanges"] as? Int {
@@ -473,7 +607,7 @@ class ProfileViewModel: ObservableObject {
                             if let nextDate = json["nextAvailableDate"] as? String {
                                 self.profileImageAlertMessage = "今月のプロフィール変更の上限に達しました\n(\(nextDate)以降に再度お試しください)"
                             } else {
-                                self.profileImageAlertMessage = "今月のプロフィール変更の上限に達しました\n来月1日以降に再度お試しください"
+                                self.profileImageAlertMessage = "今月のプロフィール変更の上限に達しました\n翌月1日以降に再度お試しください"
                             }
                         } else {
                             self.profileImageAlertMessage = "今月のプロフィール変更の上限に達しました"
@@ -501,7 +635,7 @@ class ProfileViewModel: ObservableObject {
         
         isUploadingProfileImage = false // ローディング終了
     }
-    // --- ★★★ 追加完了 ★★★ ---
+    // --- ☆☆☆ 追加完了 ☆☆☆ ---
     
     func warmFetchNicknames(for userIds: Set<String>) {
         for uid in userIds {
@@ -526,21 +660,20 @@ class ProfileViewModel: ObservableObject {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                 print("ニックネーム取得(API)時にサーバーエラー(ID: \(userId)): \(response)")
-                return nil // ★ 失敗時は nil
+                return nil // ☆ 失敗時は nil
             }
             guard let profile = try? JSONDecoder().decode(UserProfile.self, from: data) else {
                 print("ニックネーム取得(API): 200 OK だがプロファイル内容がデコード不可 (削除ユーザー？) ID: \(userId)")
-                return nil // ★ 失敗時は nil
+                return nil // ☆ 失敗時は nil
             }
             return profile.nickname
         } catch {
             print("ニックネーム取得(API)へのリクエスト中にエラー(ID: \(userId)): \(error)")
-            return nil // ★ 失敗時は nil
+            return nil // ☆ 失敗時は nil
         }
     }
 
-
-    // ★★★ 3. fetchMyProfile に notifyOnDM を追加 ★★★
+    // ☆☆☆ 3. fetchMyProfile に notifyOnDM を追加 ☆☆☆
     func fetchMyProfile(userId: String) async {
         guard !userId.isEmpty else { return }
         isLoadingSettings = true
@@ -563,9 +696,9 @@ class ProfileViewModel: ObservableObject {
             let profile = try JSONDecoder().decode(UserProfile.self, from: data)
             self.nickname = profile.nickname ?? ""
             self.notifyOnCorrectAnswer = profile.notifyOnCorrectAnswer ?? false
-            self.notifyOnDM = profile.notifyOnDM ?? false // ★ 追加
+            self.notifyOnDM = profile.notifyOnDM ?? false // ☆ 追加
             userNicknames[userId] = profile.nickname ?? ""
-            // ★ 画像URLも必要ならここでキャッシュ更新
+            // ☆ 画像URLも必要ならここでキャッシュ更新
             if let img = profile.profileImageUrl {
                 userProfileImages[userId] = img
             }
@@ -615,7 +748,7 @@ class ProfileViewModel: ObservableObject {
         isNicknameLoading = false
     }
     
-    // ★★★ 4. fetchNotificationSettings に notifyOnDM を追加 ★★★
+    // ☆☆☆ 4. fetchNotificationSettings に notifyOnDM を追加 ☆☆☆
     func fetchNotificationSettings() async {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return }
         guard !isLoadingSettings else { return }
@@ -638,7 +771,7 @@ class ProfileViewModel: ObservableObject {
             }
             let profile = try JSONDecoder().decode(UserProfile.self, from: data)
             self.notifyOnCorrectAnswer = profile.notifyOnCorrectAnswer ?? false
-            self.notifyOnDM = profile.notifyOnDM ?? false // ★ 追加
+            self.notifyOnDM = profile.notifyOnDM ?? false // ☆ 追加
         } catch {
             print("通知設定取得APIへのリクエスト中にエラー(ID: \(userId)): \(error)")
         }
@@ -650,7 +783,7 @@ class ProfileViewModel: ObservableObject {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return }
         guard !isLoadingSettings else { return }
         isLoadingSettings = true
-        print("通知設定(正解)を更新: \(isOn)") // ★ ログを明確化
+        print("通知設定(正解)を更新: \(isOn)") // ☆ ログを明確化
         let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("settings")
         do {
             guard let idToken = await authViewModel.getValidIdToken() else {
@@ -662,7 +795,7 @@ class ProfileViewModel: ObservableObject {
             request.httpMethod = "PUT"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue(idToken, forHTTPHeaderField: "Authorization")
-            // ★ "notifyOnCorrectAnswer" キーで送信
+            // ☆ "notifyOnCorrectAnswer" キーで送信
             let requestBody = ["notifyOnCorrectAnswer": isOn]
             request.httpBody = try JSONEncoder().encode(requestBody)
             let (_, response) = try await URLSession.shared.data(for: request)
@@ -681,12 +814,12 @@ class ProfileViewModel: ObservableObject {
         }
     }
     
-    // ★★★ 5. DM通知設定を更新する新しい関数を追加 ★★★
+    // ☆☆☆ 5. DM通知設定を更新する新しい関数を追加 ☆☆☆
     func updateDMNotificationSetting(isOn: Bool) async {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return }
         guard !isLoadingSettings else { return }
         isLoadingSettings = true
-        print("通知設定(DM)を更新: \(isOn)") // ★ ログを明確化
+        print("通知設定(DM)を更新: \(isOn)") // ☆ ログを明確化
         
         let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("settings")
         
@@ -701,7 +834,7 @@ class ProfileViewModel: ObservableObject {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue(idToken, forHTTPHeaderField: "Authorization")
             
-            // ★ "notifyOnDM" キーで送信
+            // ☆ "notifyOnDM" キーで送信
             let requestBody = ["notifyOnDM": isOn]
             request.httpBody = try JSONEncoder().encode(requestBody)
 
@@ -747,7 +880,7 @@ class ProfileViewModel: ObservableObject {
                 print("アカウント削除APIエラー: \(response)")
                 return false
             }
-            print("アカウント削除API成功。")
+            print("アカウント削除APIサクセス。")
             return true
         } catch {
             print("アカウント削除APIリクエストエラー: \(error)")
@@ -756,19 +889,19 @@ class ProfileViewModel: ObservableObject {
     }
     func reportContent(targetId: String, targetType: String, reason: String, detail: String) async -> Bool {
         guard authViewModel.isSignedIn else {
-            print("ProfileViewModel: 未ログインのため通報できません。")
+            print("ProfileViewModel: 未ログインのため報告できません。")
             return false
         }
         guard let idToken = await authViewModel.getValidIdToken() else {
-            print("ProfileViewModel: 認証トークン取得失敗 (通報)")
+            print("ProfileViewModel: 認証トークン取得失敗 (報告)")
             return false
         }
         let urlString = "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/reports"
         guard let url = URL(string: urlString) else {
-            print("ProfileViewModel: 通報URLが無効です。")
+            print("ProfileViewModel: 報告URLが無効です。")
             return false
         }
-        print("通報APIを呼び出します: \(targetType) \(targetId)")
+        print("報告APIを呼び出します: \(targetType) \(targetId)")
         let requestBody: [String: String] = [
             "targetType": targetType,
             "targetId": targetId,
@@ -783,13 +916,13 @@ class ProfileViewModel: ObservableObject {
             request.httpBody = try JSONEncoder().encode(requestBody)
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 201 else {
-                print("通報APIエラー: \(response)")
+                print("報告APIエラー: \(response)")
                 return false
             }
-            print("通報API成功。Report ID: \(String(data: data, encoding: .utf8) ?? "")")
+            print("報告APIサクセス。Report ID: \(String(data: data, encoding: .utf8) ?? "")")
             return true
         } catch {
-            print("通報APIリクエストエラー: \(error)")
+            print("報告APIリクエストエラー: \(error)")
             return false
         }
     }
@@ -854,7 +987,7 @@ class ProfileViewModel: ObservableObject {
                 blockedUserIds.remove(blockedUserId)
                 return false
             }
-            print("ブロック追加API成功: \(blockedUserId)")
+            print("ブロック追加APIサクセス: \(blockedUserId)")
             return true
         } catch {
             print("ブロック追加APIリクエストエラー: \(error)")
@@ -886,7 +1019,7 @@ class ProfileViewModel: ObservableObject {
                 blockedUserIds.insert(blockedUserId)
                 return false
             }
-            print("ブロック解除API成功: \(blockedUserId)")
+            print("ブロック解除APIサクセス: \(blockedUserId)")
             return true
         } catch {
             print("ブロック解除APIリクエストエラー: \(error)")
