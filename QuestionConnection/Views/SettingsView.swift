@@ -18,28 +18,28 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            // ★★★ 1. 通知設定セクションを修正 ★★★
+            // ★★★ 通知設定セクション (修正版) ★★★
             Section(header: Text("通知設定")) {
-                // 既存のトグル
+                // 1. 全問正解
                 Toggle("全問正解の通知を受け取る", isOn: $profileViewModel.notifyOnCorrectAnswer)
                     .onChange(of: profileViewModel.notifyOnCorrectAnswer) { _, newValue in
-                        Task {
-                            // 既存のメソッドを呼ぶ
-                            await profileViewModel.updateNotificationSetting(isOn: newValue)
-                        }
+                        Task { await profileViewModel.updateNotificationSetting(isOn: newValue) }
                     }
                 
-                // ★★★ 2. DM通知用のトグルを追加 ★★★
+                // 2. 記述式の採点結果 (★新規追加)
+                Toggle("記述式問題の採点結果を受け取る", isOn: $profileViewModel.notifyOnGradeResult)
+                    .onChange(of: profileViewModel.notifyOnGradeResult) { _, newValue in
+                        Task { await profileViewModel.updateGradeNotificationSetting(isOn: newValue) }
+                    }
+                
+                // 3. DM受信
                 Toggle("DMが来たら通知を受け取る", isOn: $profileViewModel.notifyOnDM)
                     .onChange(of: profileViewModel.notifyOnDM) { _, newValue in
-                        Task {
-                            // 新しく追加したメソッドを呼ぶ
-                            await profileViewModel.updateDMNotificationSetting(isOn: newValue)
-                        }
+                        Task { await profileViewModel.updateDMNotificationSetting(isOn: newValue) }
                     }
             }
 
-            // (アカウント操作セクションは変更なし)
+            // (アカウント操作セクション)
             Section(header: Text("アカウント操作")) {
                 Button(role: .destructive) {
                     authViewModel.signOut()
@@ -69,7 +69,7 @@ struct SettingsView: View {
                 .disabled(isDeleting)
             }
             
-            // (AccountInfoSection, 情報セクションは変更なし)
+            // (AccountInfoSection)
             AccountInfoSection()
                 .environmentObject(authViewModel)
                 .environmentObject(profileViewModel)
@@ -84,16 +84,15 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             Task {
-                // ★★★ 3. onAppearで両方の設定を読み込む ★★★
-                // (fetchNotificationSettings が両方読み込むように変更済み)
+                // onAppearで通知設定を読み込む
                 await profileViewModel.fetchNotificationSettings()
                 
-                // --- ★★★ ここから追加 ★★★
+                // --- ★★★ 通知状態確認 ★★★
                 checkNotificationStatus()
-                // --- ★★★ ここまで追加 ★★★
+                // --- ★★★ ここまで ★★★
             }
         }
-        // (アラート関連は変更なし)
+        // (アラート関連)
         .alert("アカウントの削除", isPresented: $showingDeleteAlert) {
             Button("キャンセル", role: .cancel) { }
             Button("削除", role: .destructive) {
@@ -121,7 +120,7 @@ struct SettingsView: View {
         }
     }
     
-    // --- ★★★ 新しいヘルパー関数を追加 ★★★
+    // --- ★★★ ヘルパー関数 ★★★
     private func checkNotificationStatus() {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             if settings.authorizationStatus == .authorized {
@@ -140,7 +139,7 @@ struct SettingsView: View {
 }
 
 
-// --- プレビュー (変更なし) ---
+// --- プレビュー ---
 #Preview {
     NavigationStack {
         let authVM = AuthViewModel()

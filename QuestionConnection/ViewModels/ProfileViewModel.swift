@@ -19,6 +19,7 @@ struct UserProfile: Codable {
     let nickname: String?
     let notifyOnCorrectAnswer: Bool?
     let notifyOnDM: Bool?
+    let notifyOnGradeResult: Bool? // ★ 追加: 採点結果の通知設定
     let profileImageUrl: String?
 }
 
@@ -114,6 +115,7 @@ class ProfileViewModel: ObservableObject {
     
     @Published var notifyOnCorrectAnswer: Bool = false
     @Published var notifyOnDM: Bool = false
+    @Published var notifyOnGradeResult: Bool = true // ★ 追加: デフォルトはON
     
     @Published var isLoadingSettings: Bool = false
 
@@ -225,6 +227,40 @@ class ProfileViewModel: ObservableObject {
             return false
         }
     }
+    
+    // ★ 追加: 採点通知設定の更新
+    func updateGradeNotificationSetting(isOn: Bool) async {
+        guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return }
+        // UI即時反映
+        self.notifyOnGradeResult = isOn
+        
+        let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("settings")
+        do {
+            guard let idToken = await authViewModel.getValidIdToken() else { return }
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "PUT"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+            
+            // サーバー側 (DynamoDB) の項目名に合わせる
+            let body = ["notifyOnGradeResult": isOn]
+            request.httpBody = try JSONEncoder().encode(body)
+            
+            let (_, response) = try await URLSession.shared.data(for: request)
+            
+            if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+                print("設定更新エラー: \(http.statusCode)")
+                // 失敗したら戻す
+                self.notifyOnGradeResult = !isOn
+            }
+        } catch {
+            print("通信エラー: \(error)")
+            self.notifyOnGradeResult = !isOn
+        }
+    }
+    
+    
 
     // (deleteQuestion ... registerDeviceToken までの関数は変更なし)
     func deleteQuestion(questionId: String) async -> Bool {
@@ -352,6 +388,8 @@ class ProfileViewModel: ObservableObject {
             bookmarkedQuestionIds.insert(questionId)
         }
     }
+    
+    
     func isBookmarked(questionId: String) -> Bool {
         return bookmarkedQuestionIds.contains(questionId)
     }
@@ -750,33 +788,33 @@ class ProfileViewModel: ObservableObject {
     
     // ☆☆☆ 4. fetchNotificationSettings に notifyOnDM を追加 ☆☆☆
     func fetchNotificationSettings() async {
-        guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return }
-        guard !isLoadingSettings else { return }
-        isLoadingSettings = true
-        guard let idToken = await authViewModel.getValidIdToken() else {
-            print("通知設定取得: 認証トークン取得失敗")
-            isLoadingSettings = false
-            return
-        }
-        let url = usersApiEndpoint.appendingPathComponent(userId)
-        do {
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.setValue(idToken, forHTTPHeaderField: "Authorization")
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                print("通知設定取得時にサーバーエラー(ID: \(userId)): \(response)")
-                isLoadingSettings = false
-                return
+            guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return }
+            guard !isLoadingSettings else { return }
+            isLoadingSettings = true
+            
+            let url = usersApiEndpoint.appendingPathComponent(userId)
+            do {
+                guard let idToken = await authViewModel.getValidIdToken() else { return }
+                var request = URLRequest(url: url)
+                request.httpMethod = "GET"
+                request.setValue(idToken, forHTTPHeaderField: "Authorization")
+                
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    isLoadingSettings = false
+                    return
+                }
+                
+                let profile = try JSONDecoder().decode(UserProfile.self, from: data)
+                self.notifyOnCorrectAnswer = profile.notifyOnCorrectAnswer ?? false
+                self.notifyOnDM = profile.notifyOnDM ?? false
+                self.notifyOnGradeResult = profile.notifyOnGradeResult ?? true // ★ 追加
+                
+            } catch {
+                print("設定取得エラー: \(error)")
             }
-            let profile = try JSONDecoder().decode(UserProfile.self, from: data)
-            self.notifyOnCorrectAnswer = profile.notifyOnCorrectAnswer ?? false
-            self.notifyOnDM = profile.notifyOnDM ?? false // ☆ 追加
-        } catch {
-            print("通知設定取得APIへのリクエスト中にエラー(ID: \(userId)): \(error)")
+            isLoadingSettings = false
         }
-        isLoadingSettings = false
-    }
 
     // (updateNotificationSetting は変更なし)
     func updateNotificationSetting(isOn: Bool) async {
