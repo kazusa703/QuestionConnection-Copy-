@@ -6,6 +6,9 @@ struct DMListView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
     @Environment(\.showAuthenticationSheet) private var showAuthenticationSheet
     @EnvironmentObject private var profileViewModel: ProfileViewModel
+    
+    // ★ 追加: 課金管理
+    @EnvironmentObject private var subscriptionManager: SubscriptionManager
 
     @State private var searchText = ""
     @State private var isInitialFetchDone = false
@@ -33,20 +36,20 @@ struct DMListView: View {
             let opponentId = thread.participants.first(where: { $0 != myUserId }) ?? ""
             return !profileViewModel.isBlocked(userId: opponentId)
         }
-        
+       
         let nonDeleted = nonBlocked.filter { thread in
             guard let deletedAt = deletedThreads[thread.threadId] else {
                 return true
             }
-            
+          
             if let threadUpdatedDate = parseDate(thread.lastUpdated),
                threadUpdatedDate > deletedAt {
                 return true
             }
-            
+          
             return false
         }
-        
+       
         guard !searchText.isEmpty else {
             return applyTabFilter(nonDeleted, myUserId: myUserId)
         }
@@ -70,7 +73,7 @@ struct DMListView: View {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let d = f.date(from: isoString) { return d }
-        
+       
         let f2 = ISO8601DateFormatter()
         f2.formatOptions = [.withInternetDateTime]
         return f2.date(from: isoString)
@@ -97,88 +100,98 @@ struct DMListView: View {
 
     var body: some View {
         NavigationStack {
-            if authViewModel.isSignedIn {
-                VStack {
-                    HStack {
-                        Button(action: { selectedTab = .all }) {
-                            Text("すべてのメッセージ")
-                                .font(.subheadline)
-                                .foregroundColor(selectedTab == .all ? .white : .gray)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                                .background(selectedTab == .all ? Color.teal : Color.clear)
-                                .cornerRadius(8)
-                        }
+            // ★ VStackを追加して全体をラップ (広告表示のため)
+            VStack(spacing: 0) {
+                // ★★★ 追加: バナー広告 ★★★
+                if !subscriptionManager.isPremium {
+                    AdBannerView()
+                        .frame(height: 50)
+                        .background(Color.gray.opacity(0.1))
+                }
+                
+                if authViewModel.isSignedIn {
+                    VStack {
+                        HStack {
+                            Button(action: { selectedTab = .all }) {
+                                Text("すべてのメッセージ")
+                                    .font(.subheadline)
+                                    .foregroundColor(selectedTab == .all ? .white : .gray)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                    .background(selectedTab == .all ? Color.teal : Color.clear)
+                                    .cornerRadius(8)
+                            }
 
-                        Button(action: { selectedTab = .unread }) {
-                            Text("未読")
-                                .font(.subheadline)
-                                .foregroundColor(selectedTab == .unread ? .white : .gray)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                                .background(selectedTab == .unread ? Color.teal : Color.clear)
-                                .cornerRadius(8)
-                        }
+                            Button(action: { selectedTab = .unread }) {
+                                Text("未読")
+                                    .font(.subheadline)
+                                    .foregroundColor(selectedTab == .unread ? .white : .gray)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                    .background(selectedTab == .unread ? Color.teal : Color.clear)
+                                    .cornerRadius(8)
+                            }
 
-                        Button(action: { selectedTab = .favorite }) {
-                            Text("お気に入り")
-                                .font(.subheadline)
-                                .foregroundColor(selectedTab == .favorite ? .white : .gray)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                                .background(selectedTab == .favorite ? Color.teal : Color.clear)
-                                .cornerRadius(8)
+                            Button(action: { selectedTab = .favorite }) {
+                                Text("お気に入り")
+                                    .font(.subheadline)
+                                    .foregroundColor(selectedTab == .favorite ? .white : .gray)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                    .background(selectedTab == .favorite ? Color.teal : Color.clear)
+                                    .cornerRadius(8)
+                            }
                         }
+                        .padding(.horizontal)
+                        .padding(.vertical, 8)
+
+                        contentForSignedIn
                     }
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
-
-                    contentForSignedIn
-                }
-            } else {
-                guestView
-            }
-        }
-        .navigationTitle("DM一覧")
-        .searchable(text: $searchText, prompt: "タイトル、ニックネームで検索")
-        .onAppear {
-            if authViewModel.isSignedIn && !isInitialFetchDone {
-                dmViewModel.setAuthViewModel(authViewModel)
-                fetchThreads()
-                isInitialFetchDone = true
-                loadFavorites()
-                loadDeletedThreads()
-            }
-        }
-        .refreshable {
-            if authViewModel.isSignedIn {
-                profileViewModel.userNicknames = [:]
-                profileViewModel.userProfileImages = [:]
-                lastMessageCache = [:]
-                await fetchThreadsAsync()
-            }
-        }
-        .onReceive(Timer.publish(every: 3.0, on: .main, in: .common).autoconnect()) { _ in
-            if authViewModel.isSignedIn {
-                Task {
-                    await fetchAllNicknames(for: dmViewModel.threads)
+                } else {
+                    guestView
                 }
             }
-        }
-        .onChange(of: authViewModel.isSignedIn) { _, isSignedIn in
-            if isSignedIn {
-                dmViewModel.setAuthViewModel(authViewModel)
-                fetchThreads()
-                loadFavorites()
-                loadDeletedThreads()
-            } else {
-                dmViewModel.threads = []
-                profileViewModel.userNicknames = [:]
-                profileViewModel.userProfileImages = [:]
-                isInitialFetchDone = false
-                favoriteThreadIds = []
-                deletedThreads = [:]
-                lastMessageCache = [:]
+            .navigationTitle("DM一覧")
+            .searchable(text: $searchText, prompt: "タイトル、ニックネームで検索")
+            .onAppear {
+                if authViewModel.isSignedIn && !isInitialFetchDone {
+                    dmViewModel.setAuthViewModel(authViewModel)
+                    fetchThreads()
+                    isInitialFetchDone = true
+                    loadFavorites()
+                    loadDeletedThreads()
+                }
+            }
+            .refreshable {
+                if authViewModel.isSignedIn {
+                    profileViewModel.userNicknames = [:]
+                    profileViewModel.userProfileImages = [:]
+                    lastMessageCache = [:]
+                    await fetchThreadsAsync()
+                }
+            }
+            .onReceive(Timer.publish(every: 3.0, on: .main, in: .common).autoconnect()) { _ in
+                if authViewModel.isSignedIn {
+                    Task {
+                        await fetchAllNicknames(for: dmViewModel.threads)
+                    }
+                }
+            }
+            .onChange(of: authViewModel.isSignedIn) { _, isSignedIn in
+                if isSignedIn {
+                    dmViewModel.setAuthViewModel(authViewModel)
+                    fetchThreads()
+                    loadFavorites()
+                    loadDeletedThreads()
+                } else {
+                    dmViewModel.threads = []
+                    profileViewModel.userNicknames = [:]
+                    profileViewModel.userProfileImages = [:]
+                    isInitialFetchDone = false
+                    favoriteThreadIds = []
+                    deletedThreads = [:]
+                    lastMessageCache = [:]
+                }
             }
         }
     }
@@ -221,7 +234,7 @@ struct DMListView: View {
                             lastMessagePreview: lastMessageCache[thread.threadId]?.text
                         )
                         .environmentObject(authViewModel)
-                        
+                       
                         // 2. 透明なリンク
                         NavigationLink(
                             destination: ConversationView(thread: thread, viewModel: dmViewModel)
@@ -242,7 +255,7 @@ struct DMListView: View {
                                 Label("お気に入りに移動", systemImage: "star")
                             }
                         }
-                        
+                       
                         Button(role: .destructive) {
                             deleteThread(threadId: thread.threadId)
                         } label: {
@@ -297,7 +310,7 @@ struct DMListView: View {
         guard let myUserId = authViewModel.userSub else { return }
         let opponentIds = Set(
             threads.flatMap { $0.participants }
-                   .filter { $0 != myUserId }
+                .filter { $0 != myUserId }
         )
         for opponentId in opponentIds {
             _ = await profileViewModel.fetchNicknameAndImage(userId: opponentId)
@@ -309,25 +322,25 @@ struct DMListView: View {
             print("fetchLastMessages: トークン取得失敗")
             return
         }
-        
+       
         let threadsEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/threads")!
 
         for thread in threads {
             if lastMessageCache[thread.threadId] != nil {
                 continue
             }
-            
+          
             let url = threadsEndpoint
                 .appendingPathComponent(thread.threadId)
                 .appendingPathComponent("messages")
-            
+          
             do {
                 var request = URLRequest(url: url)
                 request.httpMethod = "GET"
                 request.setValue(idToken, forHTTPHeaderField: "Authorization")
 
                 let (data, response) = try await URLSession.shared.data(for: request)
-                
+              
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                     print("fetchLastMessages: サーバーエラー (threadId: \(thread.threadId))")
                     lastMessageCache[thread.threadId] = (text: "エラー", date: Date())
@@ -335,7 +348,7 @@ struct DMListView: View {
                 }
 
                 let messages = try JSONDecoder().decode([Message].self, from: data)
-                
+              
                 if let lastMessage = messages.last {
                     let preview = formatMessagePreview(lastMessage.text)
                     let date = parseDate(lastMessage.timestamp) ?? Date()

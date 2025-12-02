@@ -136,13 +136,26 @@ struct QuizView: View {
     }
     
     func finishQuiz() {
-        // ★★★ 修正: 変数名変更 ★★★
-        if subscriptionManager.isPremium {
-            isResultView = true
-        } else {
-            // 無料会員なら広告を表示してから結果へ
-            adManager.showAd {
-                isResultView = true
+        Task {
+            // ★ 1. サーバーに回答を送信
+            let success = await viewModel.submitAllAnswers(questionId: question.questionId, answers: userAnswers)
+            
+            await MainActor.run {
+                if success {
+                    // ★ 2. 送信成功したら広告処理へ
+                    if subscriptionManager.isPremium {
+                        isResultView = true
+                    } else {
+                        adManager.showAd {
+                            isResultView = true
+                        }
+                    }
+                } else {
+                    // エラー時のハンドリング（簡易的にそのまま進める）
+                    print("送信失敗")
+                    // 失敗しても結果画面は見せる
+                    isResultView = true
+                }
             }
         }
     }

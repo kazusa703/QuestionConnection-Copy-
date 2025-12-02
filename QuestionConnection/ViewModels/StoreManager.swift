@@ -9,7 +9,6 @@ enum ProductID: String, CaseIterable {
     case lifetime = "com.imai.QuestionConnection.plan.lifetime"
 }
 
-// ★★★ 名前変更: StoreManager -> SubscriptionManager ★★★
 @MainActor
 class SubscriptionManager: ObservableObject {
     @Published var products: [Product] = []
@@ -21,12 +20,42 @@ class SubscriptionManager: ObservableObject {
     var isPremium: Bool {
         !purchasedProductIDs.isEmpty
     }
+    
+    // トランザクション監視用のタスク保持
+    private var updateListenerTask: Task<Void, Error>? = nil
 
     init() {
+        // ★★★ 修正: 起動時にトランザクションの更新を監視するリスナーを開始 ★★★
+        updateListenerTask = Task {
+            for await result in Transaction.updates {
+                await handle(updatedTransaction: result)
+            }
+        }
+        
+        // 初期データの読み込み
         Task {
             await updatePurchasedProducts()
             await loadProducts()
         }
+    }
+    
+    deinit {
+        // メモリ解放時に監視を停止
+        updateListenerTask?.cancel()
+    }
+    
+    // ★★★ 追加: トランザクション更新のハンドリング ★★★
+    private func handle(updatedTransaction result: VerificationResult<Transaction>) async {
+        guard case .verified(let transaction) = result else {
+            // 改ざんされたトランザクションは無視
+            return
+        }
+        
+        // 購入済み状態を更新
+        await updatePurchasedProducts()
+        
+        // トランザクションを完了（Finish）させる
+        await transaction.finish()
     }
 
     // 商品情報を取得
@@ -53,15 +82,10 @@ class SubscriptionManager: ObservableObject {
             
             switch result {
             case .success(let verification):
-                switch verification {
-                case .verified(let transaction):
-                    await transaction.finish()
-                    await updatePurchasedProducts()
-                    print("購入成功: \(transaction.productID)")
-                case .unverified:
-                    print("購入検証失敗")
-                    errorMessage = "購入の検証に失敗しました"
-                }
+                // 購入成功時はハンドラーに任せる
+                await handle(updatedTransaction: verification)
+                print("購入処理成功")
+                
             case .userCancelled:
                 print("キャンセル")
             case .pending:
@@ -79,6 +103,7 @@ class SubscriptionManager: ObservableObject {
     // 購入情報の更新
     func updatePurchasedProducts() async {
         var purchased = Set<String>()
+        // 現在有効な権利を確認
         for await result in Transaction.currentEntitlements {
             switch result {
             case .verified(let transaction):
@@ -90,7 +115,7 @@ class SubscriptionManager: ObservableObject {
         self.purchasedProductIDs = purchased
     }
     
-    // リストア
+    // リストア（復元）
     func restorePurchases() async {
         isLoading = true
         try? await AppStore.sync()

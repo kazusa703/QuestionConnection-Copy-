@@ -4,6 +4,9 @@ struct BoardView: View {
     @StateObject private var viewModel = QuestionViewModel()
     @EnvironmentObject private var authViewModel: AuthViewModel
     @EnvironmentObject private var profileViewModel: ProfileViewModel
+    
+    // ★ 追加: 課金管理
+    @EnvironmentObject private var subscriptionManager: SubscriptionManager
 
     @State private var showingFilterSheet = false
     @State private var selectedPurpose = ""
@@ -98,7 +101,14 @@ struct BoardView: View {
 
     var body: some View {
         NavigationStack {
-            VStack {
+            VStack(spacing: 0) { // ★ spacing: 0 にして隙間をなくす
+                // ★★★ 追加: バナー広告 ★★★
+                if !subscriptionManager.isPremium {
+                    AdBannerView()
+                        .frame(height: 50)
+                        .background(Color.gray.opacity(0.1))
+                }
+                
                 // --- 適用中のフィルタ表示 ---
                 if !selectedPurpose.isEmpty || showingOnlyBookmarks || !selectedTags.isEmpty {
                     HStack {
@@ -119,11 +129,14 @@ struct BoardView: View {
                         Spacer()
                     }
                     .padding(.horizontal)
+                    .padding(.top, 8) // 少し余白
                 }
 
                 // --- 質問リスト ---
                 if viewModel.isLoading && viewModel.questions.isEmpty {
                     ProgressView()
+                        .padding()
+                    Spacer()
                 } else if displayQuestions.isEmpty && !viewModel.isLoading {
                     Text("指定された条件の質問はありません。")
                         .foregroundColor(.secondary)

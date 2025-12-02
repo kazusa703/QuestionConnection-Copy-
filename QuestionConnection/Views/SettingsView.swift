@@ -4,6 +4,7 @@ import UserNotifications // ★ 通知許可のために必要
 struct SettingsView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
     @EnvironmentObject private var profileViewModel: ProfileViewModel
+    @EnvironmentObject private var subscriptionManager: SubscriptionManager // ★ 追加
     @Environment(\.dismiss) private var dismiss
 
     @State private var showingDeleteAlert = false
@@ -12,12 +13,38 @@ struct SettingsView: View {
     @State private var showingDeleteErrorAlert = false
     @State private var deleteErrorMessage = ""
     
+    @State private var showingPremiumSheet = false // ★ 追加
+    
     private let termsURL = URL(string: "https://kazusa703.github.io/QuestionConnection-Copy-/terms.md")!
     private let privacyURL = URL(string: "https://kazusa703.github.io/QuestionConnection-Copy-/privacy.md")!
 
 
     var body: some View {
         Form {
+            // ★★★ 追加: プレミアムプランへの入り口 ★★★
+            if !subscriptionManager.isPremium { // まだ課金していない人だけに表示
+                Section {
+                    Button(action: {
+                        showingPremiumSheet = true
+                    }) {
+                        HStack {
+                            Image(systemName: "crown.fill").foregroundColor(.yellow)
+                            VStack(alignment: .leading) {
+                                Text("プレミアムにアップグレード")
+                                    .font(.headline)
+                                    .foregroundColor(.primary)
+                                Text("広告非表示・全機能を開放")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+            }
+            
             // ★★★ 通知設定セクション (修正版) ★★★
             Section(header: Text("通知設定")) {
                 // 1. 全問正解
@@ -82,6 +109,10 @@ struct SettingsView: View {
         }
         .navigationTitle("設定")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showingPremiumSheet) {
+            PremiumPlanView()
+                .environmentObject(subscriptionManager)
+        }
         .onAppear {
             Task {
                 // onAppearで通知設定を読み込む
@@ -144,9 +175,11 @@ struct SettingsView: View {
     NavigationStack {
         let authVM = AuthViewModel()
         let profileVM = ProfileViewModel(authViewModel: authVM)
+        let subscriptionManager = SubscriptionManager() // ★ 追加
         
         SettingsView()
             .environmentObject(authVM)
             .environmentObject(profileVM)
+            .environmentObject(subscriptionManager) // ★ 追加
     }
 }

@@ -5,7 +5,7 @@ struct CreateQuestionView: View {
     @StateObject private var viewModel = QuestionViewModel()
     @EnvironmentObject private var authViewModel: AuthViewModel
     
-    // ★ SubscriptionManager に修正
+    // 課金管理
     @EnvironmentObject private var subscriptionManager: SubscriptionManager
     
     @Environment(\.showAuthenticationSheet) private var showAuthenticationSheet
@@ -46,7 +46,6 @@ struct CreateQuestionView: View {
                 }
                 
                 Form {
-                    // ★ 部品に分けました（コンパイルエラー対策）
                     basicInfoSection
                     quizItemsSection
                     submitButtonSection
@@ -109,7 +108,12 @@ struct CreateQuestionView: View {
                 Picker("形式", selection: $quizItems[index].type) {
                     Text("選択式").tag(QuizType.choice)
                     Text("穴埋め").tag(QuizType.fillIn)
-                    Text("記述式").tag(QuizType.essay)
+                    // ★ わかりやすくマークをつける
+                    if subscriptionManager.isPremium {
+                        Text("記述式").tag(QuizType.essay)
+                    } else {
+                        Text("記述式 (👑)").tag(QuizType.essay)
+                    }
                 }
                 .pickerStyle(.segmented)
                 
@@ -157,20 +161,77 @@ struct CreateQuestionView: View {
                         Spacer()
                     }
                 }
-                .disabled(title.isEmpty || viewModel.isLoading || isAdLoading)
+                // ★ 修正: ローディング中だけ押せないようにする
+                .disabled(viewModel.isLoading || isAdLoading)
             }
         }
     }
     
+    // ★★★ 修正: 入力バリデーションを追加 ★★★
     private func handlePostButtonTap() {
-        if title.isEmpty { return }
+        // --- 0. 入力バリデーション ---
+        // 題名チェック
+        if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            alertMessage = "題名が入力されていません。\n基本情報の欄を確認してください。"
+            showAlert = true
+            return
+        }
         
+        // 目的チェック
+        if purpose.isEmpty {
+            alertMessage = "目的が選択されていません。"
+            showAlert = true
+            return
+        }
+        
+        // 問題文チェック (空の問題がないか)
+        for (index, item) in quizItems.enumerated() {
+            if item.questionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                alertMessage = "問題 \(index + 1) の文章が入力されていません。"
+                showAlert = true
+                return
+            }
+            
+            // 選択式の場合、正解が選ばれているか
+            if item.type == .choice {
+                if item.correctAnswerId.isEmpty {
+                    alertMessage = "問題 \(index + 1) の正解（◯）が選択されていません。"
+                    showAlert = true
+                    return
+                }
+            }
+        }
+        // ----------------------------------------
+        
+        // --- 1. プレミアム機能のチェック (記述式制限) ---
+        let hasEssayQuestion = quizItems.contains { $0.type == .essay }
+        
+        if hasEssayQuestion && !subscriptionManager.isPremium {
+            alertMessage = "記述式問題の投稿はプレミアムプラン限定の機能です。\n設定画面からアップグレードしてください。"
+            showAlert = true
+            return
+        }
+        
+        // --- 2. 広告表示ロジック (3回に1回) ---
         if subscriptionManager.isPremium {
+            // 有料会員なら即投稿
             executePost()
         } else {
-            isAdLoading = true
-            adManager.showAd {
-                isAdLoading = false
+            // 無料会員: カウンターを更新して判定
+            let currentCount = UserDefaults.standard.integer(forKey: "postCount") + 1
+            UserDefaults.standard.set(currentCount, forKey: "postCount")
+            
+            print("現在の投稿回数: \(currentCount)")
+            
+            // 3回に1回 (3で割り切れる時) だけ広告を表示
+            if currentCount % 3 == 0 {
+                isAdLoading = true
+                adManager.showAd {
+                    isAdLoading = false
+                    executePost()
+                }
+            } else {
+                // それ以外は広告なしで投稿
                 executePost()
             }
         }
@@ -192,6 +253,7 @@ struct CreateQuestionView: View {
             await MainActor.run {
                 if success {
                     alertMessage = "投稿しました！"
+                    // リセット
                     title = ""; tags = []; quizItems = [QuizItem(id: UUID().uuidString, type: .choice, questionText: "")]
                 } else {
                     alertMessage = "投稿に失敗しました。"
@@ -203,7 +265,6 @@ struct CreateQuestionView: View {
 }
 
 // MARK: - 各問題タイプのエディタ部品
-// ★ ここから下が「Cannot find...」の原因だった部分です。必ず含めてください。
 
 // 1. 選択式エディタ
 struct ChoiceQuestionEditor: View {

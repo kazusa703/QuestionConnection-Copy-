@@ -2,6 +2,9 @@
 <Workspace
    version = "1.0">
    <FileRef
+      location = "group:QuestionProducts.storekit">
+   </FileRef>
+   <FileRef
       location = "group:QuestionConnection.xcodeproj">
    </FileRef>
    <FileRef
