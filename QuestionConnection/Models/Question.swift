@@ -19,6 +19,9 @@ struct Question: Codable, Identifiable {
     let dmInviteMessage: String?
     let shareCode: String?
     
+    // ★★★ 追加: 回答数（DynamoDBの answerCount を受け取る）★★★
+    var answerCount: Int?
+    
     var id: String { questionId }
     
     // 記述式問題が含まれているか判定する便利プロパティ
@@ -27,25 +30,16 @@ struct Question: Codable, Identifiable {
     }
 }
 
-// 1問分のクイズ（多機能化）
+// 1問分のクイズ（変更なし）
 struct QuizItem: Codable, Identifiable {
     let id: String
-    var type: QuizType = .choice // デフォルトは選択式
+    var type: QuizType = .choice
     var questionText: String
-    
-    // 選択式用
     var choices: [Choice] = []
     var correctAnswerId: String = ""
-    
-    // 穴埋め用
-    // 例: "リンゴは[hole1]です。" -> answers: key="hole1", value="赤い"
     var fillInAnswers: [String: String] = [:]
+    var modelAnswer: String? = nil
     
-    // 記述式用
-    // 正解データは持たない（人間が採点するため）
-    var modelAnswer: String? = nil // 模範解答（採点時の参考用）
-    
-    // Codableのキー設定（古いデータとの互換性維持のため）
     enum CodingKeys: String, CodingKey {
         case id
         case type
@@ -60,7 +54,6 @@ struct QuizItem: Codable, Identifiable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         questionText = try container.decode(String.self, forKey: .questionText)
-        // typeがない（古いデータ）場合は .choice にする
         type = try container.decodeIfPresent(QuizType.self, forKey: .type) ?? .choice
         choices = try container.decodeIfPresent([Choice].self, forKey: .choices) ?? []
         correctAnswerId = try container.decodeIfPresent(String.self, forKey: .correctAnswerId) ?? ""
@@ -68,7 +61,6 @@ struct QuizItem: Codable, Identifiable {
         modelAnswer = try container.decodeIfPresent(String.self, forKey: .modelAnswer)
     }
     
-    // 新規作成用のinit
     init(id: String, type: QuizType, questionText: String, choices: [Choice] = [], correctAnswerId: String = "", fillInAnswers: [String:String] = [:], modelAnswer: String? = nil) {
         self.id = id
         self.type = type
@@ -80,7 +72,6 @@ struct QuizItem: Codable, Identifiable {
     }
 }
 
-// 選択肢（変更なし）
 struct Choice: Codable, Identifiable {
     let id: String
     var text: String
