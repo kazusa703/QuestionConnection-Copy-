@@ -11,7 +11,7 @@ struct ProfileView: View {
     // 折りたたみ用の状態変数
     @State private var isCreatedQuestionsExpanded = false
     @State private var isUserInfoExpanded = false
-    @State private var isGradedAnswersExpanded = true // ★ 新規: デフォルトで開いておく
+    @State private var isGradedAnswersExpanded = true
     
     @State private var showSettings = false
     @State private var showEditProfile = false
@@ -20,16 +20,21 @@ struct ProfileView: View {
     @State private var reportReason = ""
     @State private var reportDetail = ""
     
-    // ★ 追加: 模範解答シートの制御
+    // 模範解答シートの制御
     @State private var showModelAnswerSheet = false
-    // ★ 追加: DM遷移トリガー
+    
+    // DM遷移トリガー
     @State private var navigateToDM = false
     @State private var selectedDMThreadId: String? = nil
+    @State private var selectedRecipientId: String = ""
 
     init(userId: String, isMyProfile: Bool, authViewModel: AuthViewModel) {
         self.userId = userId
         self.isMyProfile = isMyProfile
-        _viewModel = StateObject(wrappedValue: ProfileViewModel(authViewModel: authViewModel))
+        
+        // ★ 修正: 複雑な式を分割
+        let profileVM = ProfileViewModel(authViewModel: authViewModel)
+        _viewModel = StateObject(wrappedValue: profileVM)
     }
     
     var body: some View {
@@ -115,7 +120,7 @@ struct ProfileView: View {
                 
                 Divider()
                 
-                // --- ★★★ 3. [新規] 記述式問題の結果 ★★★ ---
+                // 3. 記述式問題の結果
                 if isMyProfile {
                     DisclosureGroup(
                         isExpanded: $isGradedAnswersExpanded,
@@ -126,7 +131,6 @@ struct ProfileView: View {
                                     .padding()
                             } else {
                                 LazyVStack(spacing: 12) {
-                                    // 記述式(statusがgraded以外)を含むもの、あるいは全てを表示
                                     ForEach(viewModel.myGradedAnswers) { log in
                                         GradedAnswerRow(log: log, onAction: { action in
                                             handleGradedAnswerAction(action, log: log)
@@ -155,13 +159,12 @@ struct ProfileView: View {
                         }
                     )
                     .padding(.horizontal)
-                    .accentColor(.primary) // 矢印の色
+                    .accentColor(.primary)
                     
                     Divider()
                 }
-                // ------------------------------------------
                 
-                // 4. 自分が作成した質問 (折りたたみ)
+                // 4. 自分が作成した質問
                 DisclosureGroup(
                     isExpanded: $isCreatedQuestionsExpanded,
                     content: {
@@ -199,7 +202,7 @@ struct ProfileView: View {
                 
                 Divider()
                 
-                // 5. ユーザー情報 (折りたたみ)
+                // 5. ユーザー情報
                 if isMyProfile {
                     DisclosureGroup(
                         isExpanded: $isUserInfoExpanded,
@@ -221,7 +224,6 @@ struct ProfileView: View {
                     )
                     .padding(.horizontal)
                     
-                    // アカウント削除ボタン
                     Button(action: { showDeleteAlert = true }) {
                         Text("アカウント削除")
                             .foregroundColor(.red)
@@ -239,19 +241,18 @@ struct ProfileView: View {
                 await viewModel.fetchUserStats(userId: userId)
                 await viewModel.fetchMyQuestions(authorId: userId)
                 if isMyProfile {
-                    await viewModel.fetchMyGradedAnswers() // ★ 履歴取得
+                    await viewModel.fetchMyGradedAnswers()
                 }
             }
         }
-        // シート: 設定
         .sheet(isPresented: $showSettings) {
-            SettingsView(viewModel: viewModel)
+            SettingsView()
+                .environmentObject(authViewModel)
+                .environmentObject(viewModel)
         }
-        // シート: プロフィール編集 (画像のアップロード等)
         .sheet(isPresented: $showEditProfile) {
             SetNicknameView(authViewModel: authViewModel, profileViewModel: viewModel)
         }
-        // ★ シート: 模範解答
         .sheet(isPresented: $showModelAnswerSheet) {
             if let question = viewModel.selectedQuestionForModelAnswer {
                 ModelAnswerView(question: question)
@@ -262,13 +263,17 @@ struct ProfileView: View {
                 }
             }
         }
-        // ★ 遷移: DM
         .background(
-            NavigationLink(destination: ConversationView(threadId: selectedDMThreadId ?? "", recipientId: ""), isActive: $navigateToDM) {
+            NavigationLink(
+                destination: ConversationView(
+                    threadId: selectedDMThreadId ?? "",
+                    recipientId: selectedRecipientId
+                ),
+                isActive: $navigateToDM
+            ) {
                 EmptyView()
             }
         )
-        // アラート類 (報告、削除) は変更なし
         .alert("通報", isPresented: $showReportAlert) {
             TextField("理由", text: $reportReason)
             TextField("詳細", text: $reportDetail)
@@ -293,7 +298,7 @@ struct ProfileView: View {
         }
     }
     
-    // ★ アクションハンドリング
+    // アクションハンドリング
     enum AnswerAction {
         case openDM
         case showModelAnswer
@@ -303,16 +308,24 @@ struct ProfileView: View {
         switch action {
         case .openDM:
             guard let authorId = log.authorId else { return }
-            // スレッドを作成/取得して遷移
+            
             Task {
-                if let thread = await dmViewModel.createThread(participantId: authorId) {
-                    self.selectedDMThreadId = thread.id
+                let existingThread = await dmViewModel.threads.first { thread in
+                    Set(thread.participantIds).contains(authorId)
+                }
+                
+                await MainActor.run {
+                    self.selectedRecipientId = authorId
+                    if let thread = existingThread {
+                        self.selectedDMThreadId = thread.threadId
+                    } else {
+                        self.selectedDMThreadId = nil
+                    }
                     self.navigateToDM = true
                 }
             }
             
         case .showModelAnswer:
-            // 質問詳細を取得してからシートを表示
             Task {
                 await viewModel.fetchQuestionDetailForModelAnswer(questionId: log.questionId)
                 self.showModelAnswerSheet = true
@@ -321,7 +334,7 @@ struct ProfileView: View {
     }
 }
 
-// ★ 新規: 記述式問題の結果行ビュー
+// 記述式問題の結果行ビュー
 struct GradedAnswerRow: View {
     let log: AnswerLogItem
     let onAction: (ProfileView.AnswerAction) -> Void
@@ -352,14 +365,13 @@ struct GradedAnswerRow: View {
                     .fontWeight(.medium)
                     .lineLimit(1)
                 
-                Text(log.updatedAt.prefix(10)) // 日付
+                Text(log.updatedAt.prefix(10))
                     .font(.caption2)
                     .foregroundColor(.gray)
             }
             
             Spacer()
             
-            // ステータス表示
             Text(statusText)
                 .font(.caption)
                 .fontWeight(.bold)
@@ -369,7 +381,6 @@ struct GradedAnswerRow: View {
                 .background(statusColor)
                 .cornerRadius(4)
             
-            // アクションボタン
             if log.status == "approved" {
                 Button(action: { onAction(.openDM) }) {
                     Image(systemName: "envelope.fill")
@@ -387,7 +398,6 @@ struct GradedAnswerRow: View {
                         .clipShape(Circle())
                 }
             } else {
-                // 採点待ちなどはアイコンなし（あるいは時計アイコン）
                 Image(systemName: "clock")
                     .foregroundColor(.gray)
                     .padding(8)
@@ -412,7 +422,6 @@ struct QuestionRowView: View {
                     .foregroundColor(.secondary)
             }
             Spacer()
-            // ★ 回答数を表示
             if let count = question.answerCount {
                 VStack {
                     Image(systemName: "person.2.fill")

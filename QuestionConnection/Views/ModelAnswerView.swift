@@ -40,8 +40,16 @@ struct ModelAnswerView: View {
                                 .foregroundColor(.green)
                                 .padding(.top, 5)
                             
-                            if let modelAnswer = item.modelAnswer, !modelAnswer.isEmpty {
-                                Text(modelAnswer)
+                            // ★ 修正: nil結合演算子(??)を使い、Optionalと非Optional両方のケースに対応
+                            if let answerText = item.modelAnswer, !answerText.isEmpty {
+                                // ...
+                            } else {
+                                Text("（模範解答は設定されていません）")
+                                    .font(.body)
+                                    .italic()
+                                    .foregroundColor(.gray)
+                            }
+                                Text(answerText)
                                     .font(.body)
                                     .padding(10)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -51,7 +59,6 @@ struct ModelAnswerView: View {
                                         RoundedRectangle(cornerRadius: 8)
                                             .stroke(Color.green.opacity(0.3), lineWidth: 1)
                                     )
-                            } else {
                                 Text("（模範解答は設定されていません）")
                                     .font(.body)
                                     .italic()
@@ -88,4 +95,3 @@ struct ModelAnswerView: View {
             }
         }
     }
-}

@@ -3,11 +3,9 @@ import SwiftUI
 struct MainTabView: View {
     // 認証状態を共有
     @EnvironmentObject var authViewModel: AuthViewModel
-    // DMのビューモデルもここで共有しておくと良い
-    @StateObject private var dmViewModel = DMViewModel(authViewModel: AuthViewModel()) // 仮初期化、onAppearで注入推奨だが、EnvironmentObjectならMainAppで注入済みのはず
-    // ※ 注意: MainAppですでに注入されている場合は @EnvironmentObject を使うべきですが、
-    // ここではエラー回避のため安全策をとります。もしMainAppで .environmentObject(dmViewModel) しているなら
-    // @EnvironmentObject var dmViewModel: DMViewModel に変えてください。
+    
+    // ★ 修正: DMViewModelに引数なしのinitを使用し、onAppearで注入する
+    @StateObject private var dmViewModel = DMViewModel()
     
     // タブの選択状態
     @State private var selection = 0
@@ -16,7 +14,6 @@ struct MainTabView: View {
         TabView(selection: $selection) {
             // 1. 質問一覧タブ
             NavigationView {
-                // ここは既存の質問一覧ビュー (ContentViewなど)
                 ContentView()
             }
             .tabItem {
@@ -46,7 +43,6 @@ struct MainTabView: View {
             .tag(2)
             
             // 4. プロフィールタブ
-            // ★★★ ここを修正: 必要な引数を渡す ★★★
             NavigationView {
                 ProfileView(
                     userId: authViewModel.userSub ?? "",
@@ -60,8 +56,10 @@ struct MainTabView: View {
             }
             .tag(3)
         }
-        // DMViewModelを環境変数として注入（下層ビューで使うため）
-        // もしAppファイルで注入済みなら不要だが、念のため。
-        // ただし dmViewModel の初期化に authViewModel が必要なら注意。
+        .environmentObject(dmViewModel) // 下層ビューに提供
+        .onAppear {
+            // ★ 修正: 画面表示時に依存関係を注入
+            dmViewModel.setAuthViewModel(authViewModel)
+        }
     }
 }
