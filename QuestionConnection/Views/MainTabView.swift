@@ -4,25 +4,25 @@ struct MainTabView: View {
     // 認証状態を共有
     @EnvironmentObject var authViewModel: AuthViewModel
     
-    // ★ 修正: DMViewModelに引数なしのinitを使用し、onAppearで注入する
-    @StateObject private var dmViewModel = DMViewModel()
+    // ★ 修正: 親から注入されたDMViewModelを使用
+    @EnvironmentObject var dmViewModel: DMViewModel
     
     // タブの選択状態
     @State private var selection = 0
     
     var body: some View {
         TabView(selection: $selection) {
-            // 1. 質問一覧タブ
+            // 1. 質問一覧タブ - ★ 修正: ContentViewではなくBoardViewを使用
             NavigationView {
-                ContentView()
+                BoardView()
             }
-            .tabItem {
+            . tabItem {
                 Image(systemName: "list.bullet.rectangle.portrait")
                 Text("質問")
             }
-            .tag(0)
+            . tag(0)
             
-            // 2. 検索/作成タブ (例)
+            // 2. 検索/作成タブ
             NavigationView {
                 CreateQuestionView()
             }
@@ -55,11 +55,6 @@ struct MainTabView: View {
                 Text("プロフィール")
             }
             .tag(3)
-        }
-        .environmentObject(dmViewModel) // 下層ビューに提供
-        .onAppear {
-            // ★ 修正: 画面表示時に依存関係を注入
-            dmViewModel.setAuthViewModel(authViewModel)
         }
     }
 }

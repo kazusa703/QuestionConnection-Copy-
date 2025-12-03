@@ -33,23 +33,85 @@ struct BlocklistResponse: Decodable {
 }
 
 // --- 採点機能用モデル ---
+// --- 採点機能用モデル (修正版) ---
+// ProfileViewModel.swift 内
+
+// --- 採点機能用モデル (修正版) ---
 struct AnswerLogItem: Codable, Identifiable {
     let logId: String
     let userId: String
-    var status: String // pending_review, approved, rejected, completed
+    var status: String
     let score: Int
     let total: Int
     let updatedAt: String
     let details: [AnswerDetail]
     
-    // ★ 追加: 質問情報（Lambdaで結合される想定）
+    // 質問情報
     let questionTitle: String?
-    let questionId: String // 必須
-    let authorId: String?  // DM作成などに必要
+    let questionId: String
+    let authorId: String?
+    
+    // ★★★ 追加: 回答者のニックネーム ★★★
+    let userNickname: String?
     
     var id: String { logId }
+    
+    enum CodingKeys: String, CodingKey {
+        case logId, userId, status, score, total, updatedAt, details
+        case questionTitle, questionId, authorId
+        case userNickname // ★ここにも追加
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        logId = try container.decode(String.self, forKey: .logId)
+        userId = try container.decode(String.self, forKey: .userId)
+        status = try container.decode(String.self, forKey: .status)
+        updatedAt = try container.decode(String.self, forKey: .updatedAt)
+        details = try container.decode([AnswerDetail].self, forKey: .details)
+        questionTitle = try container.decodeIfPresent(String.self, forKey: .questionTitle)
+        questionId = try container.decode(String.self, forKey: .questionId)
+        authorId = try container.decodeIfPresent(String.self, forKey: .authorId)
+        
+        // ★★★ 追加: ニックネームのデコード ★★★
+        userNickname = try container.decodeIfPresent(String.self, forKey: .userNickname)
+        
+        // score の柔軟なデコード
+        if let val = try? container.decode(Int.self, forKey: .score) {
+            score = val
+        } else if let valStr = try? container.decode(String.self, forKey: .score), let val = Int(valStr) {
+            score = val
+        } else {
+            score = 0
+        }
+        
+        // total の柔軟なデコード
+        if let val = try? container.decode(Int.self, forKey: .total) {
+            total = val
+        } else if let valStr = try? container.decode(String.self, forKey: .total), let val = Int(valStr) {
+            total = val
+        } else {
+            total = 0
+        }
+    }
+    
+    // エンコード用
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(logId, forKey: .logId)
+        try container.encode(userId, forKey: .userId)
+        try container.encode(status, forKey: .status)
+        try container.encode(score, forKey: .score)
+        try container.encode(total, forKey: .total)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encode(details, forKey: .details)
+        try container.encode(questionTitle, forKey: .questionTitle)
+        try container.encode(questionId, forKey: .questionId)
+        try container.encode(authorId, forKey: .authorId)
+        try container.encode(userNickname, forKey: .userNickname) // ★ここにも追加
+    }
 }
-
 struct AnswerDetail: Codable, Identifiable {
     let itemId: String
     let type: String // choice, fillIn, essay
@@ -209,29 +271,46 @@ class ProfileViewModel: ObservableObject {
         isLoadingAnswers = false
     }
     
-    // ★ 新機能: 自分の回答履歴を取得（結果確認画面用）
+    // ★ 修正: 自分の回答履歴を取得（結果確認画面用）
     func fetchMyGradedAnswers() async {
-        guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return }
-        // isLoadingAnswers = true // 必要に応じてフラグ操作
+        guard let userId = authViewModel.userSub, authViewModel.isSignedIn else {
+            print("自分の回答履歴取得: ユーザーIDまたはサインイン状態が不正")
+            return
+        }
         
         let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("answers")
         
         do {
-            guard let idToken = await authViewModel.getValidIdToken() else { return }
+            guard let idToken = await authViewModel.getValidIdToken() else {
+                print("自分の回答履歴取得: トークン取得失敗")
+                return
+            }
+            
+            print("📍 リクエストURL: \(url)")
+            print("📍 トークン先頭20文字: \(String(idToken.prefix(20)))...")
+            
             var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            // ★ 修正: Bearer プレフィックスを削除（他のメソッドと統一）
             request.setValue(idToken, forHTTPHeaderField: "Authorization")
             
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                print("自分の回答履歴取得エラー: \(response)")
+            guard let http = response as? HTTPURLResponse else {
+                print("自分の回答履歴取得エラー: 無効なレスポンス")
+                return
+            }
+            
+            guard http.statusCode == 200 else {
+                let snippet = String(data: data, encoding: .utf8) ?? ""
+                print("自分の回答履歴取得エラー: \(http.statusCode) body: \(snippet.prefix(300))")
                 return
             }
             
             let logs = try JSONDecoder().decode([AnswerLogItem].self, from: data)
             self.myGradedAnswers = logs
-            print("自分の回答履歴取得成功: \(logs.count)件")
+            print("✅ 自分の回答履歴取得成功: \(logs.count)件")
         } catch {
-            print("自分の回答履歴取得失敗: \(error)")
+            print("❌ 自分の回答履歴取得失敗: \(error)")
         }
     }
     

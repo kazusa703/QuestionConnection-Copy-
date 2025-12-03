@@ -13,5 +13,15 @@
     </array>
     <key>GADIsAdManagerApp</key>
     <true/>
+
+    <key>NSMicrophoneUsageDescription</key>
+    <string>ボイスメッセージを録音・送信するためにマイクを使用します。</string>
+
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>プロフィール画像の設定や、DMでの画像送信のためにフォトライブラリを使用します。</string>
+
+    <key>NSUserTrackingUsageDescription</key>
+    <string>お客様の興味関心に合わせた最適な広告を表示するために使用されます。</string>
+
 </dict>
 </plist>

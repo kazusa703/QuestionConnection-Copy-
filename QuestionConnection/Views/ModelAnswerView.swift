@@ -10,45 +10,38 @@ struct ModelAnswerView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     
                     Text("記述式問題の模範解答")
-                        .font(.title2)
-                        .fontWeight(.bold)
+                        . font(.title2)
+                        .fontWeight(. bold)
                         .foregroundColor(.primary)
                         .padding(.top)
                     
                     Text("以下の解答例を参考に、学習を進めましょう。")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        . font(.subheadline)
+                        . foregroundColor(.secondary)
                     
                     Divider()
                     
                     // 記述式問題のみを抽出して表示
-                    ForEach(question.quizItems.filter { $0.type == .essay }) { item in
+                    ForEach(question.quizItems.filter { $0.type == . essay }) { item in
                         VStack(alignment: .leading, spacing: 10) {
                             Text("問題:")
                                 .font(.headline)
-                                .foregroundColor(.accentColor)
+                                .foregroundColor(. accentColor)
                             
                             Text(item.questionText)
                                 .font(.body)
                                 .padding(10)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color(.systemGray6))
+                                .background(Color(. systemGray6))
                                 .cornerRadius(8)
                             
                             Text("模範解答:")
-                                .font(.headline)
-                                .foregroundColor(.green)
-                                .padding(.top, 5)
+                                . font(.headline)
+                                . foregroundColor(.green)
+                                .padding(. top, 5)
                             
-                            // ★ 修正: nil結合演算子(??)を使い、Optionalと非Optional両方のケースに対応
+                            // ★ 修正: if let で modelAnswer を取得し、空でないかチェック
                             if let answerText = item.modelAnswer, !answerText.isEmpty {
-                                // ...
-                            } else {
-                                Text("（模範解答は設定されていません）")
-                                    .font(.body)
-                                    .italic()
-                                    .foregroundColor(.gray)
-                            }
                                 Text(answerText)
                                     .font(.body)
                                     .padding(10)
@@ -59,21 +52,22 @@ struct ModelAnswerView: View {
                                         RoundedRectangle(cornerRadius: 8)
                                             .stroke(Color.green.opacity(0.3), lineWidth: 1)
                                     )
+                            } else {
                                 Text("（模範解答は設定されていません）")
                                     .font(.body)
                                     .italic()
                                     .foregroundColor(.gray)
                             }
                         }
-                        .padding(.vertical)
+                        . padding(.vertical)
                         
                         Divider()
                     }
                     
-                    if let remarks = question.remarks, !remarks.isEmpty {
+                    if !question.remarks.isEmpty {
                         Text("解説・備考:")
                             .font(.headline)
-                        Text(remarks)
+                        Text(question.remarks)
                             .font(.body)
                             .padding()
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -83,9 +77,9 @@ struct ModelAnswerView: View {
                     
                     Spacer()
                 }
-                .padding()
+                . padding()
             }
-            .navigationBarTitleDisplayMode(.inline)
+            . navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("閉じる") {
@@ -95,3 +89,4 @@ struct ModelAnswerView: View {
             }
         }
     }
+}

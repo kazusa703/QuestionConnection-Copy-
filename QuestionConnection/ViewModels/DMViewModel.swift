@@ -37,25 +37,23 @@ class DMViewModel: ObservableObject {
     }
     
     // ★★★ 追加: 特定のユーザーとのスレッドを取得するメソッド ★★★
-    func getDMThread(with targetUserId: String) async -> DMThread? {
-        // まず自分のIDを取得
-        guard let myId = authViewModel?.userSub else { return nil }
-        
-        // スレッド一覧がまだロードされていなければ取得
-        if threads.isEmpty {
+    func findDMThread(with targetUserId: String) async -> DMThread? {
+            guard let myId = authViewModel?.userSub else { return nil }
+            
+            // まだスレッド一覧がなければ取得
+            if threads.isEmpty {
+                await fetchThreads(userId: myId)
+            }
+            
+            // 相手が含まれるスレッドを探す
+            if let existing = threads.first(where: { $0.participants.contains(targetUserId) }) {
+                return existing
+            }
+            
+            // 念のため再取得して確認
             await fetchThreads(userId: myId)
+            return threads.first(where: { $0.participants.contains(targetUserId) })
         }
-        
-        // 相手のIDが含まれているスレッドを探す
-        // DMThreadのparticipantsは [String] (例: [myId, targetId])
-        if let existing = threads.first(where: { $0.participants.contains(targetUserId) }) {
-            return existing
-        }
-        
-        // なければ念のため最新を再取得して再チェック
-        await fetchThreads(userId: myId)
-        return threads.first(where: { $0.participants.contains(targetUserId) })
-    }
     
     // ブロック確認関数
     private func checkIfBlockedByTarget(targetId: String) async -> Bool? {
