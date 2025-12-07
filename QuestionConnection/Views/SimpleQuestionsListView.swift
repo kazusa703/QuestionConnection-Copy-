@@ -1,18 +1,26 @@
-//
-//  SimpleQuestionsListView.swift
-//  QuestionConnection
-//
-//  Created by 今井一颯 on 2025/12/07.
-//
-
 import SwiftUI
 
 struct SimpleQuestionsListView: View {
+    let myQuestions: [Question]
+    
     var body: some View {
-        Text(/*@START_MENU_TOKEN@*/"Hello, World!"/*@END_MENU_TOKEN@*/)
+        List {
+            ForEach(myQuestions, id: \.questionId) { question in
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text(question.title)
+                            .font(. headline)
+                    }
+                    Spacer()
+                    
+                    // ★ 未採点数を表示
+                    if let pendingCount = question.pendingCount, pendingCount > 0 {
+                        Text("未採点: \(pendingCount)")
+                            .foregroundColor(.red)
+                            .fontWeight(.bold)
+                    }
+                }
+            }
+        }
     }
-}
-
-#Preview {
-    SimpleQuestionsListView()
 }

@@ -41,7 +41,7 @@ struct QuizItem: Codable, Identifiable {
     var choices: [Choice] = []
     var correctAnswerId: String = ""
     var fillInAnswers: [String: String] = [:]
-    var modelAnswer: String? = nil
+    var modelAnswer: String?  = nil
     
     enum CodingKeys: String, CodingKey {
         case id
