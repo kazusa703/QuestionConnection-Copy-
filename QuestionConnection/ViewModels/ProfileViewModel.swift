@@ -344,47 +344,60 @@ class ProfileViewModel: ObservableObject {
     }
     
     // 採点実行 (正解/不正解)
-    func judgeAnswer(logId: String, isApproved: Bool) async -> Bool {
-        guard !logId.isEmpty, let authorId = authViewModel.userSub else { return false }
-        isJudging = true
-        
-        let urlString = "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/answers/judge"
-        guard let url = URL(string: urlString) else { return false }
-        
-        do {
-            guard let idToken = await authViewModel.getValidIdToken() else { return false }
+        func judgeAnswer(logId: String, isApproved: Bool) async -> Bool {
+            guard !logId.isEmpty, let authorId = authViewModel.userSub else { return false }
+            isJudging = true
             
-            let body: [String: Any] = [
-                "authorId": authorId,
-                "logId": logId,
-                "isApproved": isApproved
-            ]
+            let urlString = "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/answers/judge"
+            guard let url = URL(string: urlString) else { return false }
             
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue(idToken, forHTTPHeaderField: "Authorization")
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-            
-            let (_, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            do {
+                guard let idToken = await authViewModel.getValidIdToken() else { return false }
+                
+                let body: [String: Any] = [
+                    "authorId": authorId,
+                    "logId": logId,
+                    "isApproved": isApproved
+                ]
+                
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue(idToken, forHTTPHeaderField: "Authorization")
+                request.httpBody = try JSONSerialization.data(withJSONObject: body)
+                
+                let (_, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    isJudging = false
+                    return false
+                }
+                
+                // --- ★★★ 修正: ローカルのデータを即時更新 ★★★ ---
+                if let index = answerLogs.firstIndex(where: { $0.logId == logId }) {
+                    // 1. 回答リストのステータスを更新
+                    answerLogs[index].status = isApproved ? "approved" : "rejected"
+                    
+                    // 2. 質問リスト(myQuestions)の未採点数(pendingCount)を減らす
+                    let targetQuestionId = answerLogs[index].questionId
+                    if let qIndex = myQuestions.firstIndex(where: { $0.questionId == targetQuestionId }) {
+                        var currentCount = myQuestions[qIndex].pendingCount ?? 0
+                        if currentCount > 0 {
+                            myQuestions[qIndex].pendingCount = currentCount - 1
+                            print("ローカルの未採点数を減らしました: \(currentCount) -> \(currentCount - 1)")
+                        }
+                    }
+                }
+                // ----------------------------------------------------
+                
+                isJudging = false
+                return true
+                
+            } catch {
+                print("採点エラー: \(error)")
                 isJudging = false
                 return false
             }
-            
-            // ローカルデータを即時更新
-            if let index = answerLogs.firstIndex(where: { $0.logId == logId }) {
-                answerLogs[index].status = isApproved ? "approved" : "rejected"
-            }
-            isJudging = false
-            return true
-            
-        } catch {
-            print("採点エラー: \(error)")
-            isJudging = false
-            return false
         }
-    }
     
     // 採点通知設定の更新
     func updateGradeNotificationSetting(isOn: Bool) async {

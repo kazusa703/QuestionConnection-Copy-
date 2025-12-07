@@ -1,18 +1,122 @@
-//
-//  AnswerResultView.swift
-//  QuestionConnection
-//
-//  Created by 今井一颯 on 2025/12/07.
-//
-
 import SwiftUI
 
 struct AnswerResultView: View {
-    var body: some View {
-        Text(/*@START_MENU_TOKEN@*/"Hello, World!"/*@END_MENU_TOKEN@*/)
-    }
-}
+    let log: AnswerLogItem
+    @EnvironmentObject var profileViewModel: ProfileViewModel
+    @EnvironmentObject var dmViewModel: DMViewModel
+    @State private var navigateToDM = false
+    @State private var createdThread: DMThread?
+    @State private var showModelAnswer = false
+    
+    // 模範解答表示用
+    @State private var questionDetail: Question?
 
-#Preview {
-    AnswerResultView()
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                
+                // ヘッダー: 結果表示
+                HStack {
+                    if log.status == "approved" {
+                        Image(systemName: "checkmark.seal.fill").foregroundColor(.green)
+                        Text("正解！承認されました").font(.title2).bold().foregroundColor(.green)
+                    } else if log.status == "rejected" {
+                        Image(systemName: "xmark.seal.fill").foregroundColor(.red)
+                        Text("不正解").font(.title2).bold().foregroundColor(.red)
+                    } else {
+                        Image(systemName: "hourglass").foregroundColor(.orange)
+                        Text("採点待ち").font(.title2).bold().foregroundColor(.orange)
+                    }
+                }
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color(UIColor.systemGray6))
+                .cornerRadius(12)
+
+                // 回答内容の表示
+                Text("あなたの回答").font(.headline)
+                ForEach(log.details) { detail in
+                    VStack(alignment: .leading) {
+                        Text(detail.type == "essay" ? "記述式" : "選択/穴埋め")
+                            .font(.caption).foregroundColor(.secondary)
+                        Text(detail.userAnswer?.displayString ?? "")
+                            .padding()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.blue.opacity(0.05))
+                            .cornerRadius(8)
+                    }
+                }
+                
+                Divider()
+                
+                // アクションエリア
+                if log.status == "approved" {
+                    // 正解 → DMへ
+                    Button(action: startDM) {
+                        HStack {
+                            Image(systemName: "envelope.fill")
+                            Text("メッセージを送る")
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                    }
+                } else if log.status == "rejected" {
+                    // 不正解 → 模範解答
+                    Button(action: fetchModelAnswer) {
+                        HStack {
+                            Image(systemName: "doc.text.magnifyingglass")
+                            Text("模範解答を見る")
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.orange)
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                    }
+                }
+            }
+            .padding()
+        }
+        .navigationTitle("回答結果")
+        .sheet(isPresented: $showModelAnswer) {
+            if let q = questionDetail {
+                ModelAnswerView(question: q)
+            } else {
+                ProgressView()
+            }
+        }
+        .navigationDestination(isPresented: $navigateToDM) {
+            if let thread = createdThread {
+                ConversationView(thread: thread, viewModel: dmViewModel)
+            }
+        }
+    }
+    
+    func startDM() {
+        // DM開始処理 (前回のGradingDetailViewと同じロジック)
+        Task {
+            if let authorId = log.authorId,
+               let thread = await dmViewModel.findDMThread(with: authorId) { // 相手はAuthor
+                await MainActor.run {
+                    self.createdThread = thread
+                    self.navigateToDM = true
+                }
+            } else {
+                // スレッド作成ロジック（省略可）
+            }
+        }
+    }
+    
+    func fetchModelAnswer() {
+        showModelAnswer = true
+        Task {
+            await profileViewModel.fetchQuestionDetailForModelAnswer(questionId: log.questionId)
+            await MainActor.run {
+                self.questionDetail = profileViewModel.selectedQuestionForModelAnswer
+            }
+        }
+    }
 }

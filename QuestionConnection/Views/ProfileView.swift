@@ -27,6 +27,9 @@ struct ProfileView: View {
     @State private var selectedThread: DMThread? = nil
     @State private var showConversation = false
 
+    // ★ 追加: 記述式回答のフィルター用タブ
+    @State private var selectedAnswerTab = "all" // "all", "approved", "rejected", "pending"
+
     init(userId: String, isMyProfile: Bool, authViewModel: AuthViewModel) {
         self.userId = userId
         self.isMyProfile = isMyProfile
@@ -52,7 +55,7 @@ struct ProfileView: View {
                     .environmentObject(authViewModel)
                     .environmentObject(viewModel)
             }
-            . sheet(isPresented: $showEditProfile) {
+            .sheet(isPresented: $showEditProfile) {
                 SetNicknameView()
                     .environmentObject(authViewModel)
                     .environmentObject(viewModel)
@@ -121,7 +124,7 @@ struct ProfileView: View {
                     deleteAccountButton
                 }
             }
-            .padding(. bottom, 50)
+            .padding(.bottom, 50)
         }
     }
     
@@ -140,12 +143,12 @@ struct ProfileView: View {
                 Image(systemName: "person.circle.fill")
                     .resizable()
                     .frame(width: 100, height: 100)
-                    .foregroundColor(. gray)
+                    .foregroundColor(.gray)
             }
             
             Text(viewModel.userNicknames[userId] ?? "読み込み中...")
-                . font(.title2)
-                . fontWeight(.bold)
+                .font(.title2)
+                .fontWeight(.bold)
             
             if let stats = viewModel.userStats {
                 HStack(spacing: 20) {
@@ -166,20 +169,20 @@ struct ProfileView: View {
                     Button(action: { showEditProfile = true }) {
                         Label("編集", systemImage: "pencil")
                             .frame(maxWidth: .infinity)
-                            . padding(10)
-                            . background(Color.blue.opacity(0.1))
-                            . cornerRadius(8)
+                            .padding(10)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(8)
                     }
                     
                     Button(action: { showSettings = true }) {
                         Label("設定", systemImage: "gearshape")
-                            . frame(maxWidth: .infinity)
+                            .frame(maxWidth: .infinity)
                             .padding(10)
                             .background(Color.gray.opacity(0.1))
                             .cornerRadius(8)
                     }
                 }
-                .padding(. horizontal)
+                .padding(.horizontal)
             } else {
                 HStack {
                     if viewModel.isBlocked(userId: userId) {
@@ -193,47 +196,68 @@ struct ProfileView: View {
                             Task { await viewModel.addBlock(blockedUserId: userId) }
                         }
                         .buttonStyle(.bordered)
-                        .tint(. red)
+                        .tint(.red)
                     }
                     
                     Button("通報") {
                         showReportAlert = true
                     }
                     .buttonStyle(.bordered)
-                    .tint(. orange)
+                    .tint(.orange)
                 }
                 .padding(.horizontal)
             }
         }
     }
     
+    // ★ 変更: 記述式問題の結果セクション (タブ対応)
     private var gradedAnswersSection: some View {
         DisclosureGroup(
             isExpanded: $isGradedAnswersExpanded,
             content: {
-                if viewModel.myGradedAnswers.isEmpty {
-                    Text("記述式問題の回答履歴はありません")
-                        .foregroundColor(. secondary)
-                        .padding()
-                } else {
-                    LazyVStack(spacing: 12) {
-                        ForEach(viewModel.myGradedAnswers) { log in
-                            GradedAnswerRow(log: log, onAction: { action in
-                                handleGradedAnswerAction(action, log: log)
-                            })
-                        }
+                VStack {
+                    // タブ (Picker)
+                    Picker("Filter", selection: $selectedAnswerTab) {
+                        Text("すべて").tag("all")
+                        Text("採点待ち").tag("pending") // pending_review
+                        Text("正解").tag("approved")
+                        Text("不正解").tag("rejected")
                     }
-                    .padding(. top, 10)
+                    .pickerStyle(.segmented)
+                    .padding(.vertical, 8)
+                    
+                    // リスト表示
+                    let filtered = filterAnswers(viewModel.myGradedAnswers)
+                    
+                    if filtered.isEmpty {
+                        Text("該当する履歴はありません")
+                            .foregroundColor(.secondary)
+                            .padding()
+                    } else {
+                        LazyVStack(spacing: 12) {
+                            ForEach(filtered) { log in
+                                // ★ 変更: 詳細画面(AnswerResultView)へ遷移
+                                // ※ AnswerResultView は別途定義が必要です
+                                NavigationLink(destination: AnswerResultView(log: log)) {
+                                    // Row内のボタンアクションはここでは無効化し、遷移先で行う想定
+                                    GradedAnswerRow(log: log, onAction: { _ in })
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                            }
+                        }
+                        .padding(.top, 10)
+                    }
                 }
             },
             label: {
                 HStack {
-                    Image(systemName: "pencil. and.list. clipboard")
+                    Image(systemName: "pencil.and.list.clipboard")
                         .foregroundColor(.accentColor)
                     Text("記述式問題の結果")
-                        .font(. headline)
+                        .font(.headline)
                         .foregroundColor(.primary)
                     Spacer()
+                    // 全件数を表示
                     Text("\(viewModel.myGradedAnswers.count)")
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -244,8 +268,18 @@ struct ProfileView: View {
                 .padding(.vertical, 8)
             }
         )
-        .padding(. horizontal)
+        .padding(.horizontal)
         .accentColor(.primary)
+    }
+    
+    // ★ 追加: フィルターロジック
+    private func filterAnswers(_ logs: [AnswerLogItem]) -> [AnswerLogItem] {
+        switch selectedAnswerTab {
+        case "pending": return logs.filter { $0.status == "pending_review" }
+        case "approved": return logs.filter { $0.status == "approved" }
+        case "rejected": return logs.filter { $0.status == "rejected" }
+        default: return logs
+        }
     }
     
     private var createdQuestionsSection: some View {
@@ -257,13 +291,12 @@ struct ProfileView: View {
                 } else if viewModel.myQuestions.isEmpty {
                     Text("まだ質問を作成していません")
                         .foregroundColor(.secondary)
-                        . padding()
+                        .padding()
                 } else {
                     LazyVStack {
                         ForEach(viewModel.myQuestions) { question in
                             if isMyProfile {
                                 // ★ 自分（作成者）なら、採点・管理画面へ遷移
-                                // AnswerManagementView にこの画面の viewModel を渡す
                                 NavigationLink(destination: AnswerManagementView(question: question).environmentObject(viewModel)) {
                                     QuestionRowView(question: question)
                                 }
@@ -283,7 +316,7 @@ struct ProfileView: View {
             label: {
                 HStack {
                     Image(systemName: "questionmark.folder")
-                        .foregroundColor(. accentColor)
+                        .foregroundColor(.accentColor)
                     Text("自分が作成した質問")
                         .font(.headline)
                         .foregroundColor(.primary)
@@ -302,11 +335,11 @@ struct ProfileView: View {
                 AccountInfoSection()
                     .environmentObject(authViewModel)
                     .environmentObject(viewModel)
-                    .padding(. top)
+                    .padding(.top)
             },
             label: {
                 HStack {
-                    Image(systemName: "person.text. rectangle")
+                    Image(systemName: "person.text.rectangle")
                         .foregroundColor(.accentColor)
                     Text("ユーザー情報")
                         .font(.headline)
@@ -323,7 +356,7 @@ struct ProfileView: View {
         Button(action: { showDeleteAlert = true }) {
             Text("アカウント削除")
                 .foregroundColor(.red)
-                . padding()
+                .padding()
         }
     }
     
@@ -338,7 +371,6 @@ struct ProfileView: View {
             guard let authorId = log.authorId, let myUserId = authViewModel.userSub else { return }
             
             Task {
-                // 既存のスレッドを探す
                 let existingThread = dmViewModel.threads.first(where: { thread in
                     Set(thread.participants).contains(authorId)
                 })
@@ -347,11 +379,10 @@ struct ProfileView: View {
                     if let thread = existingThread {
                         self.selectedThread = thread
                     } else {
-                        // 新しいDMThreadを作成（DMThreadの定義に合わせて修正）
                         let newThread = DMThread(
                             threadId: UUID().uuidString,
                             participants: [myUserId, authorId],
-                            questionTitle: log.questionTitle ??  "",
+                            questionTitle: log.questionTitle ?? "",
                             lastUpdated: ISO8601DateFormatter().string(from: Date())
                         )
                         self.selectedThread = newThread
@@ -369,6 +400,7 @@ struct ProfileView: View {
     }
 }
 
+// ★ 変更: GradedAnswerRow（ボタンを削除しシンプルに）
 struct GradedAnswerRow: View {
     let log: AnswerLogItem
     let onAction: (ProfileView.AnswerAction) -> Void
@@ -396,7 +428,7 @@ struct GradedAnswerRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(log.questionTitle ?? "質問ID: \(log.questionId.prefix(8))...")
                     .font(.subheadline)
-                    . fontWeight(.medium)
+                    .fontWeight(.medium)
                     .lineLimit(1)
                 
                 Text(log.updatedAt.prefix(10))
@@ -406,36 +438,19 @@ struct GradedAnswerRow: View {
             
             Spacer()
             
+            // ステータスバッジのみ表示（詳細へ遷移するためボタンは不要）
             Text(statusText)
                 .font(.caption)
                 .fontWeight(.bold)
-                .foregroundColor(. white)
+                .foregroundColor(.white)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(statusColor)
                 .cornerRadius(4)
             
-            if log.status == "approved" {
-                Button(action: { onAction(.openDM) }) {
-                    Image(systemName: "envelope. fill")
-                        .foregroundColor(.blue)
-                        .padding(8)
-                        .background(Color.blue.opacity(0.1))
-                        .clipShape(Circle())
-                }
-            } else if log.status == "rejected" {
-                Button(action: { onAction(.showModelAnswer) }) {
-                    Image(systemName: "doc.text.magnifyingglass")
-                        .foregroundColor(.orange)
-                        .padding(8)
-                        .background(Color.orange.opacity(0.1))
-                        .clipShape(Circle())
-                }
-            } else {
-                Image(systemName: "clock")
-                    .foregroundColor(.gray)
-                    .padding(8)
-            }
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundColor(.gray)
         }
         .padding()
         .background(Color.white)
@@ -444,6 +459,7 @@ struct GradedAnswerRow: View {
     }
 }
 
+// ★ 変更: QuestionRowView (未採点バッジ対応)
 struct QuestionRowView: View {
     let question: Question
     var body: some View {
@@ -452,18 +468,32 @@ struct QuestionRowView: View {
                 Text(question.title)
                     .font(.headline)
                 Text(question.tags.map { "#\($0)" }.joined(separator: " "))
-                    .font(. caption)
+                    .font(.caption)
                     .foregroundColor(.secondary)
             }
             Spacer()
-            if let count = question.answerCount {
-                VStack {
-                    Image(systemName: "person.2.fill")
+            
+            VStack(alignment: .trailing) {
+                // ★★★ 未採点数のバッジ ★★★
+                if let pending = question.pendingCount, pending > 0 {
+                    Text("未採点: \(pending)")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .padding(6)
+                        .background(Color.red)
+                        .foregroundColor(.white)
+                        .clipShape(Capsule())
+                } else {
+                    // 全採点済みなら回答数表示、または非表示
+                    if let count = question.answerCount {
+                        VStack {
+                            Image(systemName: "person.2.fill")
+                            Text("\(count)")
+                        }
                         .font(.caption)
-                    Text("\(count)")
-                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    }
                 }
-                .foregroundColor(.secondary)
             }
             Image(systemName: "chevron.right")
                 .foregroundColor(.gray)

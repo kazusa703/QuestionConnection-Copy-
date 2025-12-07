@@ -19,8 +19,11 @@ struct Question: Codable, Identifiable {
     let dmInviteMessage: String?
     let shareCode: String?
     
-    // ★★★ 追加: 回答数（DynamoDBの answerCount を受け取る）★★★
+    // ★★★ 既存: 回答数 ★★★
     var answerCount: Int?
+    
+    // ★★★ 追加: 未採点数（記述式などの採点待ち数） ★★★
+    var pendingCount: Int?
     
     var id: String { questionId }
     
@@ -30,7 +33,7 @@ struct Question: Codable, Identifiable {
     }
 }
 
-// 1問分のクイズ（変更なし）
+// 1問分のクイズ
 struct QuizItem: Codable, Identifiable {
     let id: String
     var type: QuizType = .choice
