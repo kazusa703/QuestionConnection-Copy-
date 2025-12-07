@@ -116,7 +116,12 @@ struct ProfileView: View {
                     Divider()
                 }
                 
-                createdQuestionsSection
+                // ★★★ 修正：isMyProfile で条件分岐 ★★★
+                if isMyProfile {
+                    createdQuestionsButton
+                } else {
+                    createdQuestionsSection
+                }
                 Divider()
                 
                 if isMyProfile {
@@ -219,7 +224,7 @@ struct ProfileView: View {
                     // タブ (Picker)
                     Picker("Filter", selection: $selectedAnswerTab) {
                         Text("すべて").tag("all")
-                        Text("採点待ち").tag("pending") // pending_review
+                        Text("採点待ち").tag("pending")
                         Text("正解").tag("approved")
                         Text("不正解").tag("rejected")
                     }
@@ -236,7 +241,6 @@ struct ProfileView: View {
                     } else {
                         LazyVStack(spacing: 12) {
                             ForEach(filtered) { log in
-                                // ★ 変更: 詳細画面(AnswerResultView)へ遷移
                                 NavigationLink(destination: AnswerResultView(log: log)) {
                                     GradedAnswerRow(log: log, onAction: { _ in })
                                 }
@@ -255,7 +259,6 @@ struct ProfileView: View {
                         .font(.headline)
                         .foregroundColor(.primary)
                     Spacer()
-                    // 全件数を表示
                     Text("\(viewModel.myGradedAnswers.count)")
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -280,6 +283,33 @@ struct ProfileView: View {
         }
     }
     
+    // ★★★ 新規：自分が作成した質問へのボタンリンク ★★★
+    private var createdQuestionsButton: some View {
+        NavigationLink(destination: MyQuestionsDetailView(questions: viewModel.myQuestions, isLoadingMyQuestions: viewModel.isLoadingMyQuestions, viewModel: viewModel)) {
+            HStack {
+                Image(systemName: "questionmark.folder")
+                    .foregroundColor(.accentColor)
+                Text("自分が作成した質問")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                Spacer()
+                Text("\(viewModel.myQuestions.count)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(6)
+                    .background(Color.gray.opacity(0.2))
+                    .clipShape(Circle())
+                Image(systemName: "chevron.right")
+                    .foregroundColor(.gray)
+            }
+            .padding()
+            .background(Color(UIColor.secondarySystemBackground))
+            .cornerRadius(10)
+        }
+        .padding(.horizontal)
+    }
+    
+    // ★ 既存：他人のプロフィール時用（DisclosureGroup のまま）
     private var createdQuestionsSection: some View {
         DisclosureGroup(
             isExpanded: $isCreatedQuestionsExpanded,
@@ -293,19 +323,10 @@ struct ProfileView: View {
                 } else {
                     LazyVStack {
                         ForEach(viewModel.myQuestions) { question in
-                            if isMyProfile {
-                                // ★ 自分（作成者）なら、採点・管理画面へ遷移
-                                NavigationLink(destination: AnswerManagementView(question: question).environmentObject(viewModel)) {
-                                    QuestionRowView(question: question)
-                                }
-                                .buttonStyle(PlainButtonStyle())
-                            } else {
-                                // ★ 他人（回答者）なら、質問詳細（回答）画面へ遷移
-                                NavigationLink(destination: QuestionDetailView(question: question)) {
-                                    QuestionRowView(question: question)
-                                }
-                                .buttonStyle(PlainButtonStyle())
+                            NavigationLink(destination: QuestionDetailView(question: question)) {
+                                QuestionRowView(question: question)
                             }
+                            .buttonStyle(PlainButtonStyle())
                             Divider()
                         }
                     }
@@ -315,7 +336,7 @@ struct ProfileView: View {
                 HStack {
                     Image(systemName: "questionmark.folder")
                         .foregroundColor(.accentColor)
-                    Text("自分が作成した質問")
+                    Text("作成した質問")
                         .font(.headline)
                         .foregroundColor(.primary)
                     Spacer()
@@ -436,7 +457,6 @@ struct GradedAnswerRow: View {
             
             Spacer()
             
-            // ステータスバッジのみ表示（詳細へ遷移するためボタンは不要）
             Text(statusText)
                 .font(.caption)
                 .fontWeight(.bold)
