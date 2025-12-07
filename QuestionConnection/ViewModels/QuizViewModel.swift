@@ -5,13 +5,7 @@ import Combine
 struct AnswerLog: Codable {
     let questionId: String
     let userId: String
-    // selectedChoiceId は古い形式なのでオプショナルにするか、削除しても良いが
-    // 新しい形式に合わせて answers (辞書) を追加
     let answers: [String: String]
-    
-    // (古いコードとの互換性のため残す場合)
-    // let selectedChoiceId: String?
-    // let isCorrect: Bool?
 }
 
 struct AnswerStatus: Codable {
@@ -43,8 +37,8 @@ class QuizViewModel: ObservableObject {
         return await authVM.getValidIdToken()
     }
 
-    // ★★★ 修正: submitAllAnswers 関数を追加 (前回の提案コード) ★★★
-    func submitAllAnswers(questionId: String, answers: [String: Any]) async -> Bool {
+    // ★★★ 修正: submitAllAnswers 関数を置き換え ★★★
+    func submitAllAnswers(questionId: String, answers: [String: Any], hasEssay: Bool = false) async -> Bool {
         guard let userId = authViewModel?.userSub,
               let idToken = await getAuthToken() else {
             print("回答送信: 未ログインまたはトークン取得失敗")
@@ -52,35 +46,50 @@ class QuizViewModel: ObservableObject {
         }
         
         isLoading = true
-        print("回答送信開始: \(questionId)")
+        print("回答送信開始: \(questionId), 記述式含む: \(hasEssay)")
         
-        // Any型をStringに変換して辞書を作る
-        var jsonCompatibleAnswers: [String: String] = [:]
+        // Any型をStringに変換
+        var jsonCompatibleAnswers: [String: Any] = [:]
         for (key, value) in answers {
-            jsonCompatibleAnswers[key] = String(describing: value)
+            if let dictValue = value as? [String: String] {
+                jsonCompatibleAnswers[key] = dictValue
+            } else {
+                jsonCompatibleAnswers[key] = String(describing: value)
+            }
         }
         
-        // AnswerLog構造体を使ってエンコード
-        let log = AnswerLog(questionId: questionId, userId: userId, answers: jsonCompatibleAnswers)
+        // リクエストボディを作成
+        let requestBody: [String: Any] = [
+            "questionId": questionId,
+            "userId": userId,
+            "answers": jsonCompatibleAnswers,
+            "hasEssay": hasEssay
+        ]
         
         do {
             var request = URLRequest(url: answersApiEndpoint)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue(idToken, forHTTPHeaderField: "Authorization")
-            request.httpBody = try JSONEncoder().encode(log)
+            request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
             
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.shared.data(for: request)
             
-            if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
-                print("回答送信成功！")
-                isLoading = false
-                return true
-            } else {
-                print("回答送信エラー: \(response)")
-                isLoading = false
-                return false
+            if let http = response as? HTTPURLResponse {
+                print("回答送信レスポンス: \(http.statusCode)")
+                
+                if (200...299).contains(http.statusCode) {
+                    print("回答送信成功！")
+                    isLoading = false
+                    return true
+                } else {
+                    let errorBody = String(data: data, encoding: .utf8) ?? ""
+                    print("回答送信エラー: \(http.statusCode) - \(errorBody.prefix(200))")
+                }
             }
+            
+            isLoading = false
+            return false
         } catch {
             print("回答送信例外: \(error)")
             isLoading = false
@@ -143,4 +152,3 @@ class QuizViewModel: ObservableObject {
         // 必要なら残しておいてください
     }
 }
-

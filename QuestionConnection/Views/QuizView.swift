@@ -1,194 +1,255 @@
 import SwiftUI
 
 struct QuizView: View {
+    let question: Question
     @StateObject private var viewModel = QuizViewModel()
     @EnvironmentObject private var authViewModel: AuthViewModel
+    @EnvironmentObject private var profileViewModel: ProfileViewModel
     
-    // ★★★ 修正: SubscriptionManager に変更 ★★★
-    @EnvironmentObject private var subscriptionManager: SubscriptionManager
+    @State private var currentQuizIndex = 0
+    @State private var userAnswers: [String: [String: String]] = [:]
+    @State private var showResult = false
+    @State private var showEssayConfirm = false
+    @State private var hasEssayQuestion = false
+    @State private var isInCorrect = false
     
-    @Environment(\.dismiss) private var dismiss
-
-    let question: Question
-
-    @State private var currentQuestionIndex = 0
-    @State private var userAnswers: [String: Any] = [:] // 回答保存用
-    @State private var isResultView = false
-    
-    // 記述式用の入力
-    @State private var essayInput: String = ""
-    // 穴埋め用の入力
-    @State private var fillInInputs: [String: String] = [:]
-    
-    private let adManager = InterstitialAdManager()
-
     var body: some View {
-        VStack {
-            if isResultView {
-                QuizResultView(
-                    question: question,
-                    userAnswers: userAnswers,
-                    dismissAction: { dismiss() }
-                )
-            } else {
-                // --- 問題表示エリア ---
-                let item = question.quizItems[currentQuestionIndex]
+        ZStack {
+            VStack(spacing: 16) {
+                ProgressView(value: Double(currentQuizIndex + 1), total: Double(question.quizItems.count))
+                    .padding()
                 
-                VStack(alignment: .leading, spacing: 20) {
-                    // 進捗バー
-                    ProgressView(value: Double(currentQuestionIndex + 1), total: Double(question.quizItems.count))
-                    
-                    Text("Q\(currentQuestionIndex + 1). \(itemTypeString(item.type))")
-                        .font(.headline).foregroundColor(.secondary)
-                    
-                    Text(item.questionText) // 穴埋めならここで変換表示が必要
-                        .font(.title3)
-                        .fontWeight(.bold)
-                    
-                    Spacer()
-                    
-                    // --- 回答エリア (タイプ別) ---
-                    if item.type == .choice {
-                        ForEach(item.choices) { choice in
-                            Button {
-                                submitAnswer(choice.id)
-                            } label: {
-                                Text(choice.text).frame(maxWidth: .infinity).padding()
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    } else if item.type == .fillIn {
-                        // 穴ごとの入力欄を表示
-                        ScrollView {
-                            ForEach(Array(item.fillInAnswers.keys.sorted()), id: \.self) { key in
-                                VStack(alignment: .leading) {
-                                    Text(key)
-                                    TextField("回答を入力", text: Binding(
-                                        get: { fillInInputs[key] ?? "" },
-                                        set: { fillInInputs[key] = $0 }
-                                    ))
-                                    .textFieldStyle(.roundedBorder)
-                                }
-                                .padding(.bottom)
-                            }
-                        }
-                        Button("回答する") {
-                            submitAnswer(fillInInputs) // 辞書を渡す
-                        }
-                        .buttonStyle(.borderedProminent)
+                if currentQuizIndex < question.quizItems.count {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Q\(currentQuizIndex + 1). \(question.quizItems[currentQuizIndex].questionText)")
+                            .font(.headline)
+                            .padding()
                         
-                    } else if item.type == .essay {
-                        TextEditor(text: $essayInput)
-                            .border(Color.gray.opacity(0.3))
-                            .frame(height: 200)
+                        let currentItem = question.quizItems[currentQuizIndex]
                         
-                        Button("回答を送信") {
-                            submitAnswer(essayInput)
+                        if currentItem.type == .choice {
+                            ChoiceQuestionView(
+                                item: currentItem,
+                                answer: Binding(
+                                    get: { userAnswers[currentItem.id]?["choice"] ?? "" },
+                                    set: { userAnswers[currentItem.id, default: [:]]["choice"] = $0 }
+                                )
+                            )
+                        } else if currentItem.type == .fillIn {
+                            FillInQuestionView(
+                                item: currentItem,
+                                answers: Binding(
+                                    get: { userAnswers[currentItem.id] ?? [:] },
+                                    set: { userAnswers[currentItem.id] = $0 }
+                                )
+                            )
+                        } else if currentItem.type == .essay {
+                            EssayQuestionView(
+                                item: currentItem,
+                                answer: Binding(
+                                    get: { userAnswers[currentItem.id]?["essay"] ?? "" },
+                                    set: { userAnswers[currentItem.id, default: [:]]["essay"] = $0 }
+                                )
+                            )
                         }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(essayInput.isEmpty)
+                        
+                        Spacer()
                     }
-                    
-                    Spacer()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding()
+                }
+                
+                Button(action: handleAnswerTap) {
+                    Text("回答する")
+                        .frame(maxWidth: .infinity)
+                        .padding(12)
+                        .background(Color.blue)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
                 }
                 .padding()
+                .disabled(isAnswerEmpty)
             }
         }
-        .navigationTitle("クイズ")
-        .navigationBarTitleDisplayMode(.inline)
-        .task {
-            viewModel.setAuthViewModel(authViewModel)
-            // ★★★ 修正: 変数名変更 ★★★
-            if !subscriptionManager.isPremium {
-                adManager.loadAd()
+        .navigationBarBackButtonHidden(true)
+        .sheet(isPresented: $showEssayConfirm) {
+            EssayConfirmView(
+                isPresented: $showEssayConfirm,
+                onNextTap: proceedToNextQuestion,
+                onSubmitAllTap: submitAllAnswers
+            )
+        }
+        .sheet(isPresented: $showResult) {
+            if isInCorrect {
+                QuizIncorrectView(
+                    currentItem: question.quizItems[currentQuizIndex],
+                    userAnswer: userAnswers[question.quizItems[currentQuizIndex].id] ?? [:]
+                )
+            } else {
+                QuizCompleteView(question: question, hasEssay: question.quizItems.contains { $0.type == .essay })
+                    .environmentObject(authViewModel)
+                    .environmentObject(profileViewModel)
             }
         }
     }
     
-    func itemTypeString(_ type: QuizType) -> String {
-        switch type {
-        case .choice: return "選択問題"
-        case .fillIn: return "穴埋め問題"
-        case .essay: return "記述問題"
-        }
-    }
-    
-    // 回答送信処理
-    func submitAnswer(_ answer: Any) {
-        // 回答を保存
-        let itemId = question.quizItems[currentQuestionIndex].id
-        userAnswers[itemId] = answer
+    private func handleAnswerTap() {
+        let currentItem = question.quizItems[currentQuizIndex]
+        let userAnswer = userAnswers[currentItem.id] ?? [:]
         
-        // ログ送信（サーバーへ）
-        // ※記述式の場合は正誤判定はここでは行わない（Pending）
-        // 既存のlogAnswerを拡張するか、一旦ローカル保持する設計
+        let isCorrect = checkAnswer(item: currentItem, userAnswer: userAnswer)
         
-        // 次へ
-        if currentQuestionIndex + 1 < question.quizItems.count {
-            currentQuestionIndex += 1
-            // 入力リセット
-            essayInput = ""
-            fillInInputs = [:]
+        if isCorrect {
+            if currentQuizIndex + 1 < question.quizItems.count {
+                let nextItem = question.quizItems[currentQuizIndex + 1]
+                if nextItem.type == .essay {
+                    hasEssayQuestion = true
+                    showEssayConfirm = true
+                    return
+                }
+            }
+            
+            proceedToNextQuestion()
         } else {
-            // 全問終了 -> 結果画面へ
-            finishQuiz()
+            isInCorrect = true
+            showResult = true
         }
     }
     
-    func finishQuiz() {
+    private func proceedToNextQuestion() {
+        if currentQuizIndex + 1 < question.quizItems.count {
+            currentQuizIndex += 1
+        } else {
+            submitAllAnswers()
+        }
+    }
+    
+    // QuizView.swift の submitAllAnswers 関数を以下に置き換え
+
+    private func submitAllAnswers() {
         Task {
-            // ★ 1. サーバーに回答を送信
-            let success = await viewModel.submitAllAnswers(questionId: question.questionId, answers: userAnswers)
+            guard let uid = authViewModel.userSub else { return }
+            
+            // ★★★ 修正: 記述式の有無を判定して渡す ★★★
+            let hasEssay = question.quizItems.contains { $0.type == . essay }
+            
+            let success = await viewModel.submitAllAnswers(
+                questionId: question.questionId,
+                answers: userAnswers,
+                hasEssay: hasEssay  // ★★★ 追加 ★★★
+            )
             
             await MainActor.run {
                 if success {
-                    // ★ 2. 送信成功したら広告処理へ
-                    if subscriptionManager.isPremium {
-                        isResultView = true
-                    } else {
-                        adManager.showAd {
-                            isResultView = true
-                        }
-                    }
-                } else {
-                    // エラー時のハンドリング（簡易的にそのまま進める）
-                    print("送信失敗")
-                    // 失敗しても結果画面は見せる
-                    isResultView = true
+                    isInCorrect = false
+                    showResult = true
                 }
             }
+        }
+    }
+    
+    private func checkAnswer(item: QuizItem, userAnswer: [String: String]) -> Bool {
+        switch item.type {
+        case .choice:
+            let selectedId = userAnswer["choice"] ?? ""
+            return selectedId == item.correctAnswerId
+            
+        case .fillIn:
+            let correctAnswers = item.fillInAnswers
+            if correctAnswers.isEmpty { return false }
+            for (key, correctValue) in correctAnswers {
+                let userValue = userAnswer[key] ?? ""
+                if userValue.trimmingCharacters(in: .whitespacesAndNewlines) !=
+                    correctValue.trimmingCharacters(in: .whitespacesAndNewlines) {
+                    return false
+                }
+            }
+            return true
+            
+        case .essay:
+            return true
+        }
+    }
+    
+    private var isAnswerEmpty: Bool {
+        let currentItem = question.quizItems[currentQuizIndex]
+        let answer = userAnswers[currentItem.id] ?? [:]
+        
+        switch currentItem.type {
+        case .choice:
+            let choiceValue = answer["choice"] ?? ""
+            return choiceValue.isEmpty
+        case .fillIn:
+            let fillInAnswers = currentItem.fillInAnswers
+            if fillInAnswers.isEmpty { return true }
+            for key in fillInAnswers.keys {
+                if (answer[key] ?? "").isEmpty {
+                    return true
+                }
+            }
+            return false
+        case .essay:
+            let essayValue = answer["essay"] ?? ""
+            return essayValue.isEmpty
         }
     }
 }
 
-// 結果画面（簡易版）
-struct QuizResultView: View {
-    let question: Question
-    let userAnswers: [String: Any]
-    var dismissAction: () -> Void
-    
-    var hasEssay: Bool {
-        question.quizItems.contains { $0.type == .essay }
-    }
+struct ChoiceQuestionView: View {
+    let item: QuizItem
+    @Binding var answer: String
     
     var body: some View {
-        VStack(spacing: 20) {
-            Text("回答終了！").font(.largeTitle)
-            
-            if hasEssay {
-                Text("記述式問題が含まれているため、作成者の採点待ちとなります。")
-                Text("採点完了後に通知が届きます。")
-                    .foregroundColor(.secondary)
-            } else {
-                // 選択・穴埋めのみなら即判定ロジックを表示
-                // (既存の正誤判定ロジックをここに移植)
-                Text("お疲れ様でした。")
+        VStack(alignment: .leading, spacing: 12) {
+            if !item.choices.isEmpty {
+                ForEach(item.choices, id: \.id) { choice in
+                    Button(action: { answer = choice.id }) {
+                        HStack(spacing: 12) {
+                            Image(systemName: answer == choice.id ? "checkmark.circle.fill" : "circle")
+                                .foregroundColor(answer == choice.id ? .blue : .gray)
+                            
+                            Text(choice.text)
+                                .foregroundColor(.primary)
+                                .multilineTextAlignment(.leading)
+                            
+                            Spacer()
+                        }
+                        .padding(12)
+                        .background(answer == choice.id ? Color.blue.opacity(0.1) : Color.gray.opacity(0.05))
+                        .cornerRadius(8)
+                    }
+                }
             }
-            
-            Button("閉じる") {
-                dismissAction()
+        }
+        .padding()
+    }
+}
+
+struct FillInQuestionView: View {
+    let item: QuizItem
+    @Binding var answers: [String: String]
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if !item.fillInAnswers.isEmpty {
+                ForEach(Array(item.fillInAnswers.keys.sorted()), id: \.self) { key in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("[\(key)]の回答:")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        
+                        TextField("回答を入力", text: Binding(
+                            get: { answers[key] ?? "" },
+                            set: { answers[key] = $0 }
+                        ))
+                        .padding(10)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                        )
+                    }
+                }
             }
-            .buttonStyle(.borderedProminent)
         }
         .padding()
     }

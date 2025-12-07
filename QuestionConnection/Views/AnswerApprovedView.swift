@@ -12,14 +12,15 @@ struct AnswerApprovedView: View {
     
     @State private var navigateToDM = false
     @State private var createdThread: DMThread? = nil
+    @State private var showInitialDMView = false
     
     var body: some View {
         VStack(spacing: 20) {
             // ★ 正解表示セクション
             VStack(spacing: 12) {
-                Image(systemName: "checkmark. seal.fill")
+                Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: 60))
-                    .foregroundColor(. green)
+                    .foregroundColor(.green)
                 
                 Text("正解！")
                     .font(.title)
@@ -31,7 +32,7 @@ struct AnswerApprovedView: View {
                     .foregroundColor(.secondary)
             }
             .padding()
-            . frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity)
             .background(Color.green.opacity(0.1))
             .cornerRadius(12)
             
@@ -45,14 +46,14 @@ struct AnswerApprovedView: View {
                 ForEach(log.details) { detail in
                     VStack(alignment: .leading, spacing: 8) {
                         Text(detail.userAnswer?.displayString ?? "(回答なし)")
-                            . padding()
+                            .padding()
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            . background(Color.blue.opacity(0.05))
+                            .background(Color.blue.opacity(0.05))
                             .cornerRadius(8)
                     }
                 }
             }
-            .padding(. horizontal)
+            .padding(.horizontal)
             
             // ★ 模範解答を見るボタン
             Button(action: fetchAndShowModelAnswer) {
@@ -60,10 +61,10 @@ struct AnswerApprovedView: View {
                     Image(systemName: "book.fill")
                     Text("模範解答を見る")
                 }
-                . frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity)
                 .padding(12)
                 .background(Color.orange)
-                .foregroundColor(. white)
+                .foregroundColor(.white)
                 .cornerRadius(10)
             }
             .padding(.horizontal)
@@ -76,11 +77,11 @@ struct AnswerApprovedView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(12)
-                . background(Color.blue)
-                .foregroundColor(. white)
+                .background(Color.blue)
+                .foregroundColor(.white)
                 .cornerRadius(10)
             }
-            . padding(.horizontal)
+            .padding(.horizontal)
             
             Spacer()
         }
@@ -100,6 +101,15 @@ struct AnswerApprovedView: View {
                     .environmentObject(profileViewModel)
             }
         }
+        .sheet(isPresented: $showInitialDMView) {
+            NavigationStack {
+                InitialDMView(
+                    recipientId: log.authorId ?? "",
+                    questionTitle: log.questionTitle ?? "質問"
+                )
+                .environmentObject(profileViewModel)
+            }
+        }
     }
     
     private func fetchAndShowModelAnswer() {
@@ -116,11 +126,16 @@ struct AnswerApprovedView: View {
     
     private func startDM() {
         Task {
-            if let authorId = log.authorId,
-               let thread = await dmViewModel.findDMThread(with: authorId) {
-                await MainActor.run {
-                    self.createdThread = thread
-                    self.navigateToDM = true
+            if let authorId = log.authorId {
+                if let thread = await dmViewModel.findDMThread(with: authorId) {
+                    await MainActor.run {
+                        self.createdThread = thread
+                        self.navigateToDM = true
+                    }
+                } else {
+                    await MainActor.run {
+                        self.showInitialDMView = true
+                    }
                 }
             }
         }

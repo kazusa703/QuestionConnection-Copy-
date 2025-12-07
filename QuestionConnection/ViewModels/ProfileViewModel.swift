@@ -32,15 +32,11 @@ struct BlocklistResponse: Decodable {
     let blockedUserIds: [String]
 }
 
-// --- 採点機能用モデル ---
-// --- 採点機能用モデル (修正版) ---
-// ProfileViewModel.swift 内
-
-// --- 採点機能用モデル (修正版) ---
+// --- 採点機能用モデル (完全版) ---
 struct AnswerLogItem: Codable, Identifiable {
     let logId: String
     let userId: String
-    var status: String
+    var status: String // pending_review, approved, rejected, completed
     let score: Int
     let total: Int
     let updatedAt: String
@@ -51,7 +47,7 @@ struct AnswerLogItem: Codable, Identifiable {
     let questionId: String
     let authorId: String?
     
-    // ★★★ 追加: 回答者のニックネーム ★★★
+    // 回答者のニックネーム
     let userNickname: String?
     
     var id: String { logId }
@@ -59,7 +55,7 @@ struct AnswerLogItem: Codable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case logId, userId, status, score, total, updatedAt, details
         case questionTitle, questionId, authorId
-        case userNickname // ★ここにも追加
+        case userNickname
     }
     
     init(from decoder: Decoder) throws {
@@ -73,8 +69,6 @@ struct AnswerLogItem: Codable, Identifiable {
         questionTitle = try container.decodeIfPresent(String.self, forKey: .questionTitle)
         questionId = try container.decode(String.self, forKey: .questionId)
         authorId = try container.decodeIfPresent(String.self, forKey: .authorId)
-        
-        // ★★★ 追加: ニックネームのデコード ★★★
         userNickname = try container.decodeIfPresent(String.self, forKey: .userNickname)
         
         // score の柔軟なデコード
@@ -96,7 +90,6 @@ struct AnswerLogItem: Codable, Identifiable {
         }
     }
     
-    // エンコード用
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(logId, forKey: .logId)
@@ -109,13 +102,14 @@ struct AnswerLogItem: Codable, Identifiable {
         try container.encode(questionTitle, forKey: .questionTitle)
         try container.encode(questionId, forKey: .questionId)
         try container.encode(authorId, forKey: .authorId)
-        try container.encode(userNickname, forKey: .userNickname) // ★ここにも追加
+        try container.encode(userNickname, forKey: .userNickname)
     }
 }
+
 struct AnswerDetail: Codable, Identifiable {
     let itemId: String
     let type: String // choice, fillIn, essay
-    let userAnswer: UserAnswerValue? // 柔軟に対応
+    let userAnswer: UserAnswerValue?
     let isCorrect: Bool
     let status: String
     
@@ -194,7 +188,7 @@ class ProfileViewModel: ObservableObject {
     // 通知設定
     @Published var notifyOnCorrectAnswer: Bool = false
     @Published var notifyOnDM: Bool = false
-    @Published var notifyOnGradeResult: Bool = true // デフォルトはON
+    @Published var notifyOnGradeResult: Bool = true
     @Published var isLoadingSettings: Bool = false
     
     // キャッシュ
@@ -210,11 +204,11 @@ class ProfileViewModel: ObservableObject {
     
     // --- 採点・回答結果用 ---
     @Published var answerLogs: [AnswerLogItem] = [] // 自分が作成した質問への回答（採点用）
-    @Published var myGradedAnswers: [AnswerLogItem] = [] // ★ 追加: 自分が回答した履歴（結果確認用）
+    @Published var myGradedAnswers: [AnswerLogItem] = [] // 自分が回答した履歴（結果確認用）
     @Published var isLoadingAnswers = false
     @Published var isJudging = false
     
-    // ★ 追加: 模範解答表示用
+    // 模範解答表示用
     @Published var selectedQuestionForModelAnswer: Question?
     @Published var isFetchingQuestionDetail = false
     
@@ -243,7 +237,7 @@ class ProfileViewModel: ObservableObject {
         }
     }
     
-    // MARK: - 採点機能関連メソッド (New & Updated)
+    // MARK: - 採点機能関連メソッド (Core Features)
     
     // 自分が作成した質問への回答一覧を取得（採点画面用）
     func fetchAnswerLogs(questionId: String) async {
@@ -271,50 +265,33 @@ class ProfileViewModel: ObservableObject {
         isLoadingAnswers = false
     }
     
-    // ★ 修正: 自分の回答履歴を取得（結果確認画面用）
+    // 自分の回答履歴を取得（結果確認画面用）
     func fetchMyGradedAnswers() async {
-        guard let userId = authViewModel.userSub, authViewModel.isSignedIn else {
-            print("自分の回答履歴取得: ユーザーIDまたはサインイン状態が不正")
-            return
-        }
+        guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return }
         
         let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("answers")
         
         do {
-            guard let idToken = await authViewModel.getValidIdToken() else {
-                print("自分の回答履歴取得: トークン取得失敗")
-                return
-            }
-            
-            print("📍 リクエストURL: \(url)")
-            print("📍 トークン先頭20文字: \(String(idToken.prefix(20)))...")
+            guard let idToken = await authViewModel.getValidIdToken() else { return }
             
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
-            // ★ 修正: Bearer プレフィックスを削除（他のメソッドと統一）
             request.setValue(idToken, forHTTPHeaderField: "Authorization")
             
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                print("自分の回答履歴取得エラー: 無効なレスポンス")
-                return
-            }
-            
-            guard http.statusCode == 200 else {
-                let snippet = String(data: data, encoding: .utf8) ?? ""
-                print("自分の回答履歴取得エラー: \(http.statusCode) body: \(snippet.prefix(300))")
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                print("自分の回答履歴取得エラー: \(response)")
                 return
             }
             
             let logs = try JSONDecoder().decode([AnswerLogItem].self, from: data)
             self.myGradedAnswers = logs
-            print("✅ 自分の回答履歴取得成功: \(logs.count)件")
         } catch {
-            print("❌ 自分の回答履歴取得失敗: \(error)")
+            print("自分の回答履歴取得失敗: \(error)")
         }
     }
     
-    // ★ 新機能: 模範解答表示のために質問詳細を取得
+    // 模範解答表示のために質問詳細を取得
     func fetchQuestionDetailForModelAnswer(questionId: String) async {
         guard !questionId.isEmpty else { return }
         isFetchingQuestionDetail = true
@@ -322,7 +299,6 @@ class ProfileViewModel: ObservableObject {
         
         let url = questionsApiEndpoint.appendingPathComponent(questionId)
         do {
-            // 公開情報の取得なので認証不要の場合もあるが、念のため
             var request = URLRequest(url: url)
             if let idToken = await authViewModel.getValidIdToken() {
                 request.setValue(idToken, forHTTPHeaderField: "Authorization")
@@ -344,60 +320,150 @@ class ProfileViewModel: ObservableObject {
     }
     
     // 採点実行 (正解/不正解)
-        func judgeAnswer(logId: String, isApproved: Bool) async -> Bool {
-            guard !logId.isEmpty, let authorId = authViewModel.userSub else { return false }
-            isJudging = true
+    func judgeAnswer(logId: String, isApproved: Bool) async -> Bool {
+        guard !logId.isEmpty, let authorId = authViewModel.userSub else { return false }
+        isJudging = true
+        
+        let urlString = "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/answers/judge"
+        guard let url = URL(string: urlString) else { return false }
+        
+        do {
+            guard let idToken = await authViewModel.getValidIdToken() else { return false }
             
-            let urlString = "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/answers/judge"
-            guard let url = URL(string: urlString) else { return false }
+            let body: [String: Any] = [
+                "authorId": authorId,
+                "logId": logId,
+                "isApproved": isApproved
+            ]
             
-            do {
-                guard let idToken = await authViewModel.getValidIdToken() else { return false }
-                
-                let body: [String: Any] = [
-                    "authorId": authorId,
-                    "logId": logId,
-                    "isApproved": isApproved
-                ]
-                
-                var request = URLRequest(url: url)
-                request.httpMethod = "POST"
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.setValue(idToken, forHTTPHeaderField: "Authorization")
-                request.httpBody = try JSONSerialization.data(withJSONObject: body)
-                
-                let (_, response) = try await URLSession.shared.data(for: request)
-                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                    isJudging = false
-                    return false
-                }
-                
-                // --- ★★★ 修正: ローカルのデータを即時更新 ★★★ ---
-                if let index = answerLogs.firstIndex(where: { $0.logId == logId }) {
-                    // 1. 回答リストのステータスを更新
-                    answerLogs[index].status = isApproved ? "approved" : "rejected"
-                    
-                    // 2. 質問リスト(myQuestions)の未採点数(pendingCount)を減らす
-                    let targetQuestionId = answerLogs[index].questionId
-                    if let qIndex = myQuestions.firstIndex(where: { $0.questionId == targetQuestionId }) {
-                        var currentCount = myQuestions[qIndex].pendingCount ?? 0
-                        if currentCount > 0 {
-                            myQuestions[qIndex].pendingCount = currentCount - 1
-                            print("ローカルの未採点数を減らしました: \(currentCount) -> \(currentCount - 1)")
-                        }
-                    }
-                }
-                // ----------------------------------------------------
-                
-                isJudging = false
-                return true
-                
-            } catch {
-                print("採点エラー: \(error)")
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 isJudging = false
                 return false
             }
+            
+            // ローカルのデータを即時更新
+            if let index = answerLogs.firstIndex(where: { $0.logId == logId }) {
+                answerLogs[index].status = isApproved ? "approved" : "rejected"
+                
+                // 未採点数を減らす
+                let targetQuestionId = answerLogs[index].questionId
+                if let qIndex = myQuestions.firstIndex(where: { $0.questionId == targetQuestionId }) {
+                    let currentCount = myQuestions[qIndex].pendingCount ?? 0
+                    if currentCount > 0 {
+                        myQuestions[qIndex].pendingCount = currentCount - 1
+                    }
+                }
+            }
+            
+            isJudging = false
+            return true
+            
+        } catch {
+            print("採点エラー: \(error)")
+            isJudging = false
+            return false
         }
+    }
+    
+    // 複数記述式の採点を一括送信
+    func submitEssayGrades(logId: String, essayGrades: [String: Bool]) async -> Bool {
+        guard !logId.isEmpty, let authorId = authViewModel.userSub else { return false }
+        isJudging = true
+        
+        let urlString = "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/answers/judge"
+        guard let url = URL(string: urlString) else {
+            isJudging = false
+            return false
+        }
+        
+        // 全ての記述式が正解かどうか判定
+        let allApproved = essayGrades.values.allSatisfy { $0 == true }
+        
+        do {
+            guard let idToken = await authViewModel.getValidIdToken() else {
+                isJudging = false
+                return false
+            }
+            
+            let body: [String: Any] = [
+                "authorId": authorId,
+                "logId": logId,
+                "isApproved": allApproved,
+                "essayGrades": essayGrades
+            ]
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                isJudging = false
+                return false
+            }
+            
+            if http.statusCode == 200 {
+                if let index = answerLogs.firstIndex(where: { $0.logId == logId }) {
+                    answerLogs[index].status = allApproved ? "approved" : "rejected"
+                    
+                    let targetQuestionId = answerLogs[index].questionId
+                    if let qIndex = myQuestions.firstIndex(where: { $0.questionId == targetQuestionId }) {
+                        let currentCount = myQuestions[qIndex].pendingCount ?? 0
+                        if currentCount > 0 {
+                            myQuestions[qIndex].pendingCount = currentCount - 1
+                        }
+                    }
+                }
+                isJudging = false
+                return true
+            } else {
+                let errorBody = String(data: data, encoding: .utf8) ?? ""
+                print("採点エラー: \(http.statusCode) - \(errorBody.prefix(200))")
+                isJudging = false
+                return false
+            }
+            
+        } catch {
+            print("採点例外: \(error)")
+            isJudging = false
+            return false
+        }
+    }
+    
+    // 回答詳細を取得（採点画面用）
+    func fetchAnswerDetail(logId: String) async -> AnswerLogItem? {
+        guard !logId.isEmpty else { return nil }
+        guard let idToken = await authViewModel.getValidIdToken() else { return nil }
+        
+        guard let url = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/answers/\(logId)") else { return nil }
+        
+        do {
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                print("回答詳細取得エラー")
+                return nil
+            }
+            
+            let detail = try JSONDecoder().decode(AnswerLogItem.self, from: data)
+            return detail
+        } catch {
+            print("回答詳細取得失敗: \(error)")
+            return nil
+        }
+    }
     
     // 採点通知設定の更新
     func updateGradeNotificationSetting(isOn: Bool) async {
@@ -419,11 +485,9 @@ class ProfileViewModel: ObservableObject {
             let (_, response) = try await URLSession.shared.data(for: request)
             
             if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-                print("設定更新エラー: \(http.statusCode)")
-                self.notifyOnGradeResult = !isOn // 戻す
+                self.notifyOnGradeResult = !isOn
             }
         } catch {
-            print("通信エラー: \(error)")
             self.notifyOnGradeResult = !isOn
         }
     }
@@ -453,7 +517,6 @@ class ProfileViewModel: ObservableObject {
             self.notifyOnDM = profile.notifyOnDM ?? false
             self.notifyOnGradeResult = profile.notifyOnGradeResult ?? true
             
-            // キャッシュ更新
             userNicknames[userId] = profile.nickname ?? ""
             if let img = profile.profileImageUrl {
                 userProfileImages[userId] = img

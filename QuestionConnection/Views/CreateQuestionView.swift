@@ -101,32 +101,46 @@ struct CreateQuestionView: View {
     
     // --- 2. 問題作成セクション ---
     private var quizItemsSection: some View {
-        ForEach($quizItems.indices, id: \.self) { index in
+        ForEach(quizItems.indices, id: \.self) { index in
             Section(header: Text("問題 \(index + 1)")) {
-                Picker("形式", selection: $quizItems[index].type) {
+                Picker("形式", selection: Binding(
+                    get: { quizItems[index].type },
+                    set: { quizItems[index].type = $0 }
+                )) {
                     Text("選択式").tag(QuizType.choice)
                     Text("穴埋め").tag(QuizType.fillIn)
-                    // ★ わかりやすくマークをつける
                     if subscriptionManager.isPremium {
                         Text("記述式").tag(QuizType.essay)
                     } else {
                         Text("記述式 (👑)").tag(QuizType.essay)
                     }
                 }
-                . pickerStyle(.segmented)
+                .pickerStyle(.segmented)
                 
                 // タイプごとのエディタ呼び出し
-                if quizItems[index].type == .choice {
-                    ChoiceQuestionEditor(item: $quizItems[index])
-                } else if quizItems[index].type == .fillIn {
-                    FillInQuestionEditor(item: $quizItems[index])
-                } else {
-                    EssayQuestionEditor(item: $quizItems[index])
+                switch quizItems[index].type {
+                case .choice:
+                    ChoiceQuestionEditor(item: Binding(
+                        get: { quizItems[index] },
+                        set: { quizItems[index] = $0 }
+                    ))
+                case .fillIn:
+                    FillInQuestionEditor(item: Binding(
+                        get: { quizItems[index] },
+                        set: { quizItems[index] = $0 }
+                    ))
+                case .essay:
+                    EssayQuestionEditor(item: Binding(
+                        get: { quizItems[index] },
+                        set: { quizItems[index] = $0 }
+                    ))
                 }
                 
                 if quizItems.count > 1 {
-                    Button("この問題を削除", role: .destructive) {
-                        quizItems.remove(at: index)
+                    Button("この問題を削除", role: . destructive) {
+                        withAnimation {
+                            _ = quizItems.remove(at: index)
+                        }
                     }
                 }
             }

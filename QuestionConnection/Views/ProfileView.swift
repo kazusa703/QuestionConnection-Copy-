@@ -8,8 +8,6 @@ struct ProfileView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     @EnvironmentObject var dmViewModel: DMViewModel
     
-    // 折りたたみ用の状態変数
-    @State private var isCreatedQuestionsExpanded = false
     @State private var isUserInfoExpanded = false
     @State private var isGradedAnswersExpanded = true
     
@@ -20,15 +18,12 @@ struct ProfileView: View {
     @State private var reportReason = ""
     @State private var reportDetail = ""
     
-    // 模範解答シートの制御
     @State private var showModelAnswerSheet = false
     
-    // DM遷移トリガー
     @State private var selectedThread: DMThread? = nil
     @State private var showConversation = false
 
-    // ★ 追加: 記述式回答のフィルター用タブ
-    @State private var selectedAnswerTab = "all" // "all", "approved", "rejected", "pending"
+    @State private var selectedAnswerTab = "all"
 
     init(userId: String, isMyProfile: Bool, authViewModel: AuthViewModel) {
         self.userId = userId
@@ -116,12 +111,7 @@ struct ProfileView: View {
                     Divider()
                 }
                 
-                // ★★★ 修正：isMyProfile で条件分岐 ★★★
-                if isMyProfile {
-                    createdQuestionsButton
-                } else {
-                    createdQuestionsSection
-                }
+                createdQuestionsSection
                 Divider()
                 
                 if isMyProfile {
@@ -132,6 +122,8 @@ struct ProfileView: View {
             .padding(.bottom, 50)
         }
     }
+    
+    // MARK: - Components
     
     private var profileHeader: some View {
         VStack(spacing: 15) {
@@ -215,13 +207,13 @@ struct ProfileView: View {
         }
     }
     
-    // ★ 変更: 記述式問題の結果セクション (タブ対応)
+    // MARK: - Graded Answers Section (Tabs & Badges)
+    
     private var gradedAnswersSection: some View {
         DisclosureGroup(
             isExpanded: $isGradedAnswersExpanded,
             content: {
                 VStack {
-                    // タブ (Picker)
                     Picker("Filter", selection: $selectedAnswerTab) {
                         Text("すべて").tag("all")
                         Text("採点待ち").tag("pending")
@@ -231,7 +223,6 @@ struct ProfileView: View {
                     .pickerStyle(.segmented)
                     .padding(.vertical, 8)
                     
-                    // リスト表示
                     let filtered = filterAnswers(viewModel.myGradedAnswers)
                     
                     if filtered.isEmpty {
@@ -242,7 +233,7 @@ struct ProfileView: View {
                         LazyVStack(spacing: 12) {
                             ForEach(filtered) { log in
                                 NavigationLink(destination: AnswerResultView(log: log)) {
-                                    GradedAnswerRow(log: log, onAction: { _ in })
+                                    GradedAnswerRow(log: log)
                                 }
                                 .buttonStyle(PlainButtonStyle())
                             }
@@ -259,6 +250,18 @@ struct ProfileView: View {
                         .font(.headline)
                         .foregroundColor(.primary)
                     Spacer()
+                    
+                    let pendingCount = viewModel.myGradedAnswers.filter { $0.status == "pending_review" }.count
+                    if pendingCount > 0 {
+                        Text("\(pendingCount)")
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                            .padding(6)
+                            .background(Color.orange)
+                            .clipShape(Circle())
+                    }
+                    
                     Text("\(viewModel.myGradedAnswers.count)")
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -273,7 +276,6 @@ struct ProfileView: View {
         .accentColor(.primary)
     }
     
-    // ★ 追加: フィルターロジック
     private func filterAnswers(_ logs: [AnswerLogItem]) -> [AnswerLogItem] {
         switch selectedAnswerTab {
         case "pending": return logs.filter { $0.status == "pending_review" }
@@ -283,67 +285,49 @@ struct ProfileView: View {
         }
     }
     
-    // ★★★ 新規：自分が作成した質問へのボタンリンク ★★★
-    private var createdQuestionsButton: some View {
-        NavigationLink(destination: MyQuestionsDetailView(questions: viewModel.myQuestions, isLoadingMyQuestions: viewModel.isLoadingMyQuestions, viewModel: viewModel)) {
+    // MARK: - Created Questions Section (Badges & Navigation Logic)
+    
+    private var createdQuestionsSection: some View {
+        NavigationLink(destination: MyQuestionsDetailView(
+            questions: viewModel.myQuestions,
+            isLoadingMyQuestions: viewModel.isLoadingMyQuestions,
+            viewModel: viewModel
+        ).environmentObject(authViewModel)) {
             HStack {
                 Image(systemName: "questionmark.folder")
                     .foregroundColor(.accentColor)
-                Text("自分が作成した質問")
+                Text(isMyProfile ? "自分が作成した質問" : "作成した質問")
                     .font(.headline)
                     .foregroundColor(.primary)
+                
                 Spacer()
+                
+                // 未採点数バッジ
+                let totalPending = viewModel.myQuestions.compactMap { $0.pendingCount }.reduce(0, +)
+                if totalPending > 0 {
+                    Text("\(totalPending)")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                        .padding(6)
+                        .background(Color.red)
+                        .clipShape(Circle())
+                }
+                
+                // 質問数
                 Text("\(viewModel.myQuestions.count)")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(6)
                     .background(Color.gray.opacity(0.2))
                     .clipShape(Circle())
+                
                 Image(systemName: "chevron.right")
                     .foregroundColor(.gray)
             }
-            .padding()
-            .background(Color(UIColor.secondarySystemBackground))
-            .cornerRadius(10)
+            .padding(.vertical, 8)
         }
-        .padding(.horizontal)
-    }
-    
-    // ★ 既存：他人のプロフィール時用（DisclosureGroup のまま）
-    private var createdQuestionsSection: some View {
-        DisclosureGroup(
-            isExpanded: $isCreatedQuestionsExpanded,
-            content: {
-                if viewModel.isLoadingMyQuestions {
-                    ProgressView().padding()
-                } else if viewModel.myQuestions.isEmpty {
-                    Text("まだ質問を作成していません")
-                        .foregroundColor(.secondary)
-                        .padding()
-                } else {
-                    LazyVStack {
-                        ForEach(viewModel.myQuestions) { question in
-                            NavigationLink(destination: QuestionDetailView(question: question)) {
-                                QuestionRowView(question: question)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                            Divider()
-                        }
-                    }
-                }
-            },
-            label: {
-                HStack {
-                    Image(systemName: "questionmark.folder")
-                        .foregroundColor(.accentColor)
-                    Text("作成した質問")
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                    Spacer()
-                }
-                .padding(.vertical, 8)
-            }
-        )
+        .buttonStyle(PlainButtonStyle())
         .padding(.horizontal)
     }
     
@@ -378,51 +362,12 @@ struct ProfileView: View {
                 .padding()
         }
     }
-    
-    enum AnswerAction {
-        case openDM
-        case showModelAnswer
-    }
-    
-    private func handleGradedAnswerAction(_ action: AnswerAction, log: AnswerLogItem) {
-        switch action {
-        case .openDM:
-            guard let authorId = log.authorId, let myUserId = authViewModel.userSub else { return }
-            
-            Task {
-                let existingThread = dmViewModel.threads.first(where: { thread in
-                    Set(thread.participants).contains(authorId)
-                })
-                
-                await MainActor.run {
-                    if let thread = existingThread {
-                        self.selectedThread = thread
-                    } else {
-                        let newThread = DMThread(
-                            threadId: UUID().uuidString,
-                            participants: [myUserId, authorId],
-                            questionTitle: log.questionTitle ?? "",
-                            lastUpdated: ISO8601DateFormatter().string(from: Date())
-                        )
-                        self.selectedThread = newThread
-                    }
-                    self.showConversation = true
-                }
-            }
-            
-        case .showModelAnswer:
-            Task {
-                await viewModel.fetchQuestionDetailForModelAnswer(questionId: log.questionId)
-                self.showModelAnswerSheet = true
-            }
-        }
-    }
 }
 
-// ★ 変更: GradedAnswerRow（ボタンを削除しシンプルに）
+// MARK: - Subviews
+
 struct GradedAnswerRow: View {
     let log: AnswerLogItem
-    let onAction: (ProfileView.AnswerAction) -> Void
     
     var statusText: String {
         switch log.status {
@@ -477,7 +422,6 @@ struct GradedAnswerRow: View {
     }
 }
 
-// ★ 変更: QuestionRowView (未採点バッジ対応)
 struct QuestionRowView: View {
     let question: Question
     var body: some View {
@@ -492,7 +436,6 @@ struct QuestionRowView: View {
             Spacer()
             
             VStack(alignment: .trailing) {
-                // ★★★ 未採点数のバッジ ★★★
                 if let pending = question.pendingCount, pending > 0 {
                     Text("未採点: \(pending)")
                         .font(.caption2)
@@ -502,7 +445,6 @@ struct QuestionRowView: View {
                         .foregroundColor(.white)
                         .clipShape(Capsule())
                 } else {
-                    // 全採点済みなら回答数表示、または非表示
                     if let count = question.answerCount {
                         VStack {
                             Image(systemName: "person.2.fill")
