@@ -10,20 +10,26 @@ struct MainTabView: View {
     // タブの選択状態
     @State private var selection = 0
     
+    // ★★★ 追加: 各タブのNavigationPathを管理 ★★★
+    @State private var questionPath = NavigationPath()
+    @State private var createPath = NavigationPath()
+    @State private var dmPath = NavigationPath()
+    @State private var profilePath = NavigationPath()
+
     var body: some View {
         TabView(selection: $selection) {
-            // 1. 質問一覧タブ - ★ 修正: ContentViewではなくBoardViewを使用
-            NavigationView {
+            // 1. 質問一覧タブ
+            NavigationStack(path: $questionPath) {
                 BoardView()
             }
-            . tabItem {
+            .tabItem {
                 Image(systemName: "list.bullet.rectangle.portrait")
                 Text("質問")
             }
-            . tag(0)
+            .tag(0)
             
             // 2. 検索/作成タブ
-            NavigationView {
+            NavigationStack(path: $createPath) {
                 CreateQuestionView()
             }
             .tabItem {
@@ -33,7 +39,7 @@ struct MainTabView: View {
             .tag(1)
             
             // 3. DM一覧タブ
-            NavigationView {
+            NavigationStack(path: $dmPath) {
                 DMListView()
             }
             .tabItem {
@@ -43,7 +49,7 @@ struct MainTabView: View {
             .tag(2)
             
             // 4. プロフィールタブ
-            NavigationView {
+            NavigationStack(path: $profilePath) {
                 ProfileView(
                     userId: authViewModel.userSub ?? "",
                     isMyProfile: true,
@@ -57,4 +63,14 @@ struct MainTabView: View {
             .tag(3)
         }
     }
+}
+
+#Preview {
+    let authVM = AuthViewModel()
+    let dmVM = DMViewModel()
+    dmVM.setAuthViewModel(authVM)
+    
+    return MainTabView()
+        .environmentObject(authVM)
+        .environmentObject(dmVM)
 }

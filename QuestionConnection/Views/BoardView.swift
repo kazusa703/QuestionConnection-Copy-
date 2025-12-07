@@ -36,11 +36,11 @@ struct BoardView: View {
         if searchText.isEmpty {
             searchedQuestions = viewModel.questions
         } else {
-            let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let keyword = searchText.trimmingCharacters(in: . whitespacesAndNewlines)
             searchedQuestions = viewModel.questions.filter { question in
                 let titleMatch = question.title.localizedCaseInsensitiveContains(keyword)
                 let tagMatch = question.tags.contains { $0.localizedCaseInsensitiveContains(keyword) }
-                let codeMatch = (question.shareCode ?? "").localizedCaseInsensitiveContains(keyword)
+                let codeMatch = (question.shareCode ??  "").localizedCaseInsensitiveContains(keyword)
                 return titleMatch || tagMatch || codeMatch
             }
         }
@@ -90,287 +90,285 @@ struct BoardView: View {
     // 最終的な表示リスト（ソート または ランダム抽出）
     private var displayQuestions: [Question] {
         switch sortOption {
-        case .newest:
+        case . newest:
             return filteredPool.sorted { $0.createdAt > $1.createdAt }
         case .oldest:
             return filteredPool.sorted { $0.createdAt < $1.createdAt }
-        case .random:
+        case . random:
             return randomQuestions
         }
     }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) { // ★ spacing: 0 にして隙間をなくす
-                // ★★★ 追加: バナー広告 ★★★
-                if !subscriptionManager.isPremium {
-                    AdBannerView()
-                        .frame(height: 50)
-                        .background(Color.gray.opacity(0.1))
-                }
-                
-                // --- 適用中のフィルタ表示 ---
-                if !selectedPurpose.isEmpty || showingOnlyBookmarks || !selectedTags.isEmpty {
-                    HStack {
-                        let descriptions = buildFilterDescriptions()
-                        
-                        Text(descriptions.joined(separator: " | "))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-
-                        Button {
-                            selectedPurpose = ""
-                            showingOnlyBookmarks = false
-                            selectedTags.removeAll()
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                    }
-                    .padding(.horizontal)
-                    .padding(.top, 8) // 少し余白
-                }
-
-                // --- 質問リスト ---
-                if viewModel.isLoading && viewModel.questions.isEmpty {
-                    ProgressView()
-                        .padding()
-                    Spacer()
-                } else if displayQuestions.isEmpty && !viewModel.isLoading {
-                    Text("指定された条件の質問はありません。")
-                        .foregroundColor(.secondary)
-                        .padding()
-                    Spacer()
-                } else {
-                    List {
-                        ForEach(displayQuestions) { question in
-                            // ★★★ 修正: ZStackを使って矢印(>)を消すテクニック ★★★
-                            ZStack(alignment: .leading) {
-                                // 1. 中身（見た目）
-                                VStack(alignment: .leading) {
-                                    Text(question.title)
-                                        .font(.headline)
-                                    HStack(spacing: 6) {
-                                        if let purpose = question.purpose, !purpose.isEmpty {
-                                            Text(purpose)
-                                                .font(.caption2)
-                                                .foregroundColor(.secondary)
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                                .background(Color.green.opacity(0.15))
-                                                .clipShape(Capsule())
-                                        }
-                                        
-                                        Text("タグ: \(question.tags.joined(separator: ", "))")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-                                
-                                // 2. 透明なリンク（機能）
-                                NavigationLink(destination: QuestionDetailView(question: question).environmentObject(profileViewModel)) {
-                                    EmptyView()
-                                }
-                                .opacity(0) // 透明にする
-                            }
-                        }
-                        
-                        // ランダムモード時のみ表示する「リシャッフルボタン」
-                        if sortOption == .random {
-                            Section {
-                                Button(action: reshuffleRandomQuestions) {
-                                    HStack {
-                                        Spacer()
-                                        Image(systemName: "arrow.triangle.2.circlepath")
-                                        Text("別の5件を表示する")
-                                        Spacer()
-                                    }
-                                    .padding(.vertical, 8)
-                                    .foregroundColor(.blue)
-                                }
-                            }
-                        }
-                    }
-                    .listStyle(.plain)
-                }
-            }
-            .navigationTitle("掲示板")
-            // ツールバー
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    HStack(spacing: 12) {
-                        // 1. 並び替えメニュー
-                        Menu {
-                            Button(action: { sortOption = .newest }) {
-                                HStack {
-                                    Text("最新順")
-                                    Spacer()
-                                    if sortOption == .newest { Image(systemName: "checkmark") }
-                                }
-                            }
-                            Button(action: { sortOption = .oldest }) {
-                                HStack {
-                                    Text("古い順")
-                                    Spacer()
-                                    if sortOption == .oldest { Image(systemName: "checkmark") }
-                                }
-                            }
-                            Button(action: {
-                                sortOption = .random
-                                reshuffleRandomQuestions()
-                            }) {
-                                HStack {
-                                    Text("ランダム")
-                                    Spacer()
-                                    if sortOption == .random { Image(systemName: "checkmark") }
-                                }
-                            }
-                        } label: {
-                            Image(systemName: "arrow.up.arrow.down")
-                        }
-                        
-                        // 2. ブックマークボタン
-                        Button(action: {
-                            if authViewModel.isSignedIn {
-                                showingOnlyBookmarks.toggle()
-                            }
-                        }) {
-                            Image(systemName: showingOnlyBookmarks ? "bookmark.fill" : "bookmark")
-                                .foregroundColor(showingOnlyBookmarks ? .orange : .gray)
-                        }
-                        
-                        // 3. 絞り込みボタン
-                        Button {
-                            showingFilterSheet = true
-                        } label: {
-                            Image(systemName: (!selectedPurpose.isEmpty || !selectedTags.isEmpty) ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-                        }
-                    }
-                }
+        VStack(spacing: 0) { // ★ spacing: 0 にして隙間をなくす
+            // ★★★ 追加: バナー広告 ★★★
+            if !subscriptionManager.isPremium {
+                AdBannerView()
+                    .frame(height: 50)
+                    .background(Color.gray.opacity(0.1))
             }
             
-            // 統合絞り込みシート
-            .sheet(isPresented: $showingFilterSheet) {
-                NavigationStack {
-                    Form {
-                        // 検索バー
-                        Section(header: Text("検索")) {
-                            TextField("タイトル・問題番号で検索", text: $searchText)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                        
-                        // 目的で絞り込み
-                        Section(header: Text("目的で絞り込む")) {
-                            Picker("目的を選択", selection: $selectedPurpose) {
-                                Text("選択なし").tag("")
-                                ForEach(viewModel.availablePurposes, id: \.self) { p in
-                                    Text(p).tag(p)
-                                }
-                            }
-                            .pickerStyle(.inline)
-                            .labelsHidden()
-                        }
-                        
-                        // タグで検索
-                        Section(header: Text("タグで検索")) {
-                            HStack {
-                                TextField("タグを入力", text: $tagInput)
-                                    .textFieldStyle(.roundedBorder)
-                                
-                                Button(action: addTagFromInput) {
-                                    Image(systemName: "plus.circle.fill")
-                                        .foregroundColor(.blue)
-                                        .font(.system(size: 20))
-                                }
-                                .disabled(tagInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            }
-                        }
-                        
-                        if !selectedTags.isEmpty {
-                            Section(header: Text("選択中のタグ（\(selectedTags.count)/5）")) {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    HStack(spacing: 8) {
-                                        ForEach(selectedTags, id: \.self) { tag in
-                                            HStack(spacing: 4) {
-                                                Text(tag)
-                                                    .font(.caption)
-                                                Button(action: { removeTag(tag) }) {
-                                                    Image(systemName: "xmark.circle.fill")
-                                                        .font(.caption)
-                                                }
-                                            }
-                                            .padding(6)
-                                            .background(Color.blue.opacity(0.2))
-                                            .cornerRadius(4)
-                                        }
-                                        Spacer()
+            // --- 適用中のフィルタ表示 ---
+            if !selectedPurpose.isEmpty || showingOnlyBookmarks || !selectedTags.isEmpty {
+                HStack {
+                    let descriptions = buildFilterDescriptions()
+                    
+                    Text(descriptions.joined(separator: " | "))
+                        .font(. caption)
+                        .foregroundColor(.secondary)
+
+                    Button {
+                        selectedPurpose = ""
+                        showingOnlyBookmarks = false
+                        selectedTags.removeAll()
+                    } label: {
+                        Image(systemName: "xmark. circle.fill")
+                            . foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal)
+                .padding(.top, 8) // 少し余白
+            }
+
+            // --- 質問リスト ---
+            if viewModel.isLoading && viewModel.questions.isEmpty {
+                ProgressView()
+                    .padding()
+                Spacer()
+            } else if displayQuestions.isEmpty && !viewModel.isLoading {
+                Text("指定された条件の質問はありません。")
+                    .foregroundColor(.secondary)
+                    .padding()
+                Spacer()
+            } else {
+                List {
+                    ForEach(displayQuestions) { question in
+                        // ★★★ 修正: ZStackを使って矢印(>)を消すテクニック ★★★
+                        ZStack(alignment: .leading) {
+                            // 1. 中身（見た目）
+                            VStack(alignment: .leading) {
+                                Text(question.title)
+                                    .font(.headline)
+                                HStack(spacing: 6) {
+                                    if let purpose = question.purpose, !purpose.isEmpty {
+                                        Text(purpose)
+                                            . font(.caption2)
+                                            .foregroundColor(.secondary)
+                                            .padding(.horizontal, 6)
+                                            .padding(. vertical, 2)
+                                            .background(Color.green.opacity(0.15))
+                                            .clipShape(Capsule())
                                     }
+                                    
+                                    Text("タグ: \(question.tags.joined(separator: ", "))")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
                                 }
                             }
                             
-                            Section {
-                                Button(role: .destructive) {
-                                    selectedTags.removeAll()
-                                } label: {
-                                    HStack {
-                                        Spacer()
-                                        Text("タグ検索をリセット")
-                                        Spacer()
+                            // 
+                            NavigationLink(destination: QuestionDetailView(question: question).environmentObject(profileViewModel)) {
+                                EmptyView()
+                            }
+                            .opacity(0) // 透明にする
+                        }
+                    }
+                    
+                    // ランダムモード時のみ表示する「リシャッフルボタン」
+                    if sortOption == .random {
+                        Section {
+                            Button(action: reshuffleRandomQuestions) {
+                                HStack {
+                                    Spacer()
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                    Text("別の5件を表示する")
+                                    Spacer()
+                                }
+                                .padding(.vertical, 8)
+                                .foregroundColor(.blue)
+                            }
+                        }
+                    }
+                }
+                .listStyle(. plain)
+            }
+        }
+        .navigationTitle("掲示板")
+        // ツールバー
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                HStack(spacing: 12) {
+                    // 1. 並び替えメニュー
+                    Menu {
+                        Button(action: { sortOption = .newest }) {
+                            HStack {
+                                Text("最新順")
+                                Spacer()
+                                if sortOption == .newest { Image(systemName: "checkmark") }
+                            }
+                        }
+                        Button(action: { sortOption = .oldest }) {
+                            HStack {
+                                Text("古い順")
+                                Spacer()
+                                if sortOption == .oldest { Image(systemName: "checkmark") }
+                            }
+                        }
+                        Button(action: {
+                            sortOption = .random
+                            reshuffleRandomQuestions()
+                        }) {
+                            HStack {
+                                Text("ランダム")
+                                Spacer()
+                                if sortOption == .random { Image(systemName: "checkmark") }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up.arrow.down")
+                    }
+                    
+                    // 2. ブックマークボタン
+                    Button(action: {
+                        if authViewModel.isSignedIn {
+                            showingOnlyBookmarks.toggle()
+                        }
+                    }) {
+                        Image(systemName: showingOnlyBookmarks ? "bookmark.fill" : "bookmark")
+                            .foregroundColor(showingOnlyBookmarks ? .orange : .gray)
+                    }
+                    
+                    // 3. 絞り込みボタン
+                    Button {
+                        showingFilterSheet = true
+                    } label: {
+                        Image(systemName: (!selectedPurpose.isEmpty || !selectedTags.isEmpty) ? "line.3. horizontal. decrease. circle. fill" : "line.3. horizontal.decrease.circle")
+                    }
+                }
+            }
+        }
+        
+        // 統合絞り込みシート
+        .sheet(isPresented: $showingFilterSheet) {
+            NavigationStack {
+                Form {
+                    // 検索バー
+                    Section(header: Text("検索")) {
+                        TextField("タイトル・問題番号で検索", text: $searchText)
+                            .textFieldStyle(. roundedBorder)
+                    }
+                    
+                    // 目的で絞り込み
+                    Section(header: Text("目的で絞り込む")) {
+                        Picker("目的を選択", selection: $selectedPurpose) {
+                            Text("選択なし").tag("")
+                            ForEach(viewModel.availablePurposes, id: \.self) { p in
+                                Text(p).tag(p)
+                            }
+                        }
+                        . pickerStyle(.inline)
+                        .labelsHidden()
+                    }
+                    
+                    // タグで検索
+                    Section(header: Text("タグで検索")) {
+                        HStack {
+                            TextField("タグを入力", text: $tagInput)
+                                .textFieldStyle(.roundedBorder)
+                            
+                            Button(action: addTagFromInput) {
+                                Image(systemName: "plus.circle. fill")
+                                    .foregroundColor(.blue)
+                                    .font(.system(size: 20))
+                            }
+                            .disabled(tagInput.trimmingCharacters(in: . whitespacesAndNewlines).isEmpty)
+                        }
+                    }
+                    
+                    if !selectedTags.isEmpty {
+                        Section(header: Text("選択中のタグ（\(selectedTags.count)/5）")) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 8) {
+                                    ForEach(selectedTags, id: \.self) { tag in
+                                        HStack(spacing: 4) {
+                                            Text(tag)
+                                                . font(.caption)
+                                            Button(action: { removeTag(tag) }) {
+                                                Image(systemName: "xmark. circle.fill")
+                                                    .font(.caption)
+                                            }
+                                        }
+                                        . padding(6)
+                                        .background(Color.blue.opacity(0.2))
+                                        .cornerRadius(4)
                                     }
+                                    Spacer()
                                 }
                             }
                         }
                         
-                        // リセットボタン
                         Section {
                             Button(role: .destructive) {
-                                selectedPurpose = ""
-                                showingOnlyBookmarks = false
                                 selectedTags.removeAll()
-                                searchText = ""
-                                showingFilterSheet = false
                             } label: {
                                 HStack {
                                     Spacer()
-                                    Text("すべてをリセット")
+                                    Text("タグ検索をリセット")
                                     Spacer()
                                 }
                             }
                         }
                     }
-                    .navigationTitle("絞り込み")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .navigationBarTrailing) {
-                            Button("完了") {
-                                showingFilterSheet = false
+                    
+                    // リセットボタン
+                    Section {
+                        Button(role: .destructive) {
+                            selectedPurpose = ""
+                            showingOnlyBookmarks = false
+                            selectedTags.removeAll()
+                            searchText = ""
+                            showingFilterSheet = false
+                        } label: {
+                            HStack {
+                                Spacer()
+                                Text("すべてをリセット")
+                                Spacer()
                             }
                         }
                     }
                 }
-            }
-            
-            .task {
-                viewModel.setAuthViewModel(authViewModel)
-                await fetchFilteredQuestions()
-            }
-            .refreshable {
-                await fetchFilteredQuestions()
-                if sortOption == .random {
-                    reshuffleRandomQuestions()
+                .navigationTitle("絞り込み")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("完了") {
+                            showingFilterSheet = false
+                        }
+                    }
                 }
             }
-            .onChange(of: searchText) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
-            .onChange(of: selectedPurpose) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
-            .onChange(of: showingOnlyBookmarks) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
-            .onChange(of: selectedTags) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
         }
+        
+        . task {
+            viewModel.setAuthViewModel(authViewModel)
+            await fetchFilteredQuestions()
+        }
+        .refreshable {
+            await fetchFilteredQuestions()
+            if sortOption == .random {
+                reshuffleRandomQuestions()
+            }
+        }
+        .onChange(of: searchText) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
+        .onChange(of: selectedPurpose) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
+        . onChange(of: showingOnlyBookmarks) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
+        .onChange(of: selectedTags) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
     }
 
     private func fetchFilteredQuestions() async {
         let purposeToFetch = selectedPurpose.isEmpty ? nil : selectedPurpose
-        let bookmarkedByUserId: String? = (showingOnlyBookmarks && authViewModel.isSignedIn) ? authViewModel.userSub : nil
+        let bookmarkedByUserId: String?  = (showingOnlyBookmarks && authViewModel.isSignedIn) ? authViewModel.userSub : nil
         await viewModel.fetchQuestions(purpose: purposeToFetch, bookmarkedBy: bookmarkedByUserId)
     }
     

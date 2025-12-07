@@ -72,7 +72,7 @@ struct ProfileView: View {
             }
             .sheet(isPresented: $showConversation) {
                 if let thread = selectedThread {
-                    NavigationView {
+                    NavigationStack {
                         ConversationView(thread: thread, viewModel: dmViewModel)
                             .environmentObject(authViewModel)
                             .environmentObject(viewModel)
@@ -237,9 +237,7 @@ struct ProfileView: View {
                         LazyVStack(spacing: 12) {
                             ForEach(filtered) { log in
                                 // ★ 変更: 詳細画面(AnswerResultView)へ遷移
-                                // ※ AnswerResultView は別途定義が必要です
                                 NavigationLink(destination: AnswerResultView(log: log)) {
-                                    // Row内のボタンアクションはここでは無効化し、遷移先で行う想定
                                     GradedAnswerRow(log: log, onAction: { _ in })
                                 }
                                 .buttonStyle(PlainButtonStyle())

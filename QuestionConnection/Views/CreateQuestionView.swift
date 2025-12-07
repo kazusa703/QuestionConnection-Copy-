@@ -36,32 +36,30 @@ struct CreateQuestionView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                // バナー広告
-                if shouldShowBanner {
-                    AdBannerView()
-                        .frame(height: 50)
-                        .background(Color.gray.opacity(0.1))
-                }
-                
-                Form {
-                    basicInfoSection
-                    quizItemsSection
-                    submitButtonSection
-                }
+        VStack(spacing: 0) {
+            // バナー広告
+            if shouldShowBanner {
+                AdBannerView()
+                    . frame(height: 50)
+                    .background(Color.gray.opacity(0.1))
             }
-            .navigationTitle("作成")
-            .navigationBarTitleDisplayMode(.inline)
-            .alert("通知", isPresented: $showAlert) {
-                Button("OK") {}
-            } message: {
-                Text(alertMessage)
+            
+            Form {
+                basicInfoSection
+                quizItemsSection
+                submitButtonSection
             }
-            .task {
-                viewModel.setAuthViewModel(authViewModel)
-                adManager.loadAd()
-            }
+        }
+        .navigationTitle("作成")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert("通知", isPresented: $showAlert) {
+            Button("OK") {}
+        } message: {
+            Text(alertMessage)
+        }
+        .task {
+            viewModel.setAuthViewModel(authViewModel)
+            adManager.loadAd()
         }
     }
     
@@ -87,7 +85,7 @@ struct CreateQuestionView: View {
                 }
             }
             if !tags.isEmpty {
-                ScrollView(.horizontal) {
+                ScrollView(. horizontal) {
                     HStack {
                         ForEach(tags, id: \.self) { tag in
                             Text(tag).padding(5).background(Color.blue.opacity(0.1)).cornerRadius(5)
@@ -115,7 +113,7 @@ struct CreateQuestionView: View {
                         Text("記述式 (👑)").tag(QuizType.essay)
                     }
                 }
-                .pickerStyle(.segmented)
+                . pickerStyle(.segmented)
                 
                 // タイプごとのエディタ呼び出し
                 if quizItems[index].type == .choice {
@@ -162,7 +160,7 @@ struct CreateQuestionView: View {
                     }
                 }
                 // ★ 修正: ローディング中だけ押せないようにする
-                .disabled(viewModel.isLoading || isAdLoading)
+                . disabled(viewModel.isLoading || isAdLoading)
             }
         }
     }
@@ -171,7 +169,7 @@ struct CreateQuestionView: View {
     private func handlePostButtonTap() {
         // --- 0. 入力バリデーション ---
         // 題名チェック
-        if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if title.trimmingCharacters(in: . whitespacesAndNewlines).isEmpty {
             alertMessage = "題名が入力されていません。\n基本情報の欄を確認してください。"
             showAlert = true
             return
@@ -204,7 +202,7 @@ struct CreateQuestionView: View {
         // ----------------------------------------
         
         // --- 1. プレミアム機能のチェック (記述式制限) ---
-        let hasEssayQuestion = quizItems.contains { $0.type == .essay }
+        let hasEssayQuestion = quizItems.contains { $0.type == . essay }
         
         if hasEssayQuestion && !subscriptionManager.isPremium {
             alertMessage = "記述式問題の投稿はプレミアムプラン限定の機能です。\n設定画面からアップグレードしてください。"
@@ -301,8 +299,8 @@ struct FillInQuestionEditor: View {
                 .font(.caption).foregroundColor(.secondary)
             
             HStack {
-                TextField("文章を入力...", text: $tempText)
-                    .textFieldStyle(.roundedBorder)
+                TextField("文章を入力.. .", text: $tempText)
+                    .textFieldStyle(. roundedBorder)
                 
                 Button("穴") {
                     insertHole()
@@ -312,7 +310,7 @@ struct FillInQuestionEditor: View {
             
             Text("プレビュー: " + tempText)
                 .font(.body)
-                .padding(.vertical, 4)
+                .padding(. vertical, 4)
             
             Divider()
             
@@ -321,7 +319,7 @@ struct FillInQuestionEditor: View {
                 HStack {
                     Text(key)
                     TextField("正解", text: Binding(
-                        get: { item.fillInAnswers[key] ?? "" },
+                        get: { item.fillInAnswers[key] ??  "" },
                         set: { item.fillInAnswers[key] = $0 }
                     ))
                     .textFieldStyle(.roundedBorder)
