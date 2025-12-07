@@ -5,6 +5,8 @@ struct QuizView: View {
     @StateObject private var viewModel = QuizViewModel()
     @EnvironmentObject private var authViewModel: AuthViewModel
     @EnvironmentObject private var profileViewModel: ProfileViewModel
+    @EnvironmentObject private var subscriptionManager: SubscriptionManager
+    @Environment(\.dismiss) var dismiss
     
     @State private var currentQuizIndex = 0
     @State private var userAnswers: [String: [String: String]] = [:]
@@ -12,6 +14,8 @@ struct QuizView: View {
     @State private var showEssayConfirm = false
     @State private var hasEssayQuestion = false
     @State private var isInCorrect = false
+    
+    private let adManager = InterstitialAdManager()
     
     var body: some View {
         ZStack {
@@ -44,7 +48,7 @@ struct QuizView: View {
                                 )
                             )
                         } else if currentItem.type == .essay {
-                            EssayQuestionView(
+                            QuizEssayQuestionView(
                                 item: currentItem,
                                 answer: Binding(
                                     get: { userAnswers[currentItem.id]?["essay"] ?? "" },
@@ -72,6 +76,12 @@ struct QuizView: View {
             }
         }
         .navigationBarBackButtonHidden(true)
+        .onAppear {
+            viewModel.setAuthViewModel(authViewModel)
+            if !subscriptionManager.isPremium {
+                adManager.loadAd()
+            }
+        }
         .sheet(isPresented: $showEssayConfirm) {
             EssayConfirmView(
                 isPresented: $showEssayConfirm,
@@ -86,9 +96,15 @@ struct QuizView: View {
                     userAnswer: userAnswers[question.quizItems[currentQuizIndex].id] ?? [:]
                 )
             } else {
-                QuizCompleteView(question: question, hasEssay: question.quizItems.contains { $0.type == .essay })
-                    .environmentObject(authViewModel)
-                    .environmentObject(profileViewModel)
+                QuizCompleteViewWrapper(
+                    question: question,
+                    hasEssay: question.quizItems.contains { $0.type == .essay },
+                    dismissAction: {
+                        dismiss()
+                    }
+                )
+                .environmentObject(authViewModel)
+                .environmentObject(profileViewModel)
             }
         }
     }
@@ -124,25 +140,27 @@ struct QuizView: View {
         }
     }
     
-    // QuizView.swift の submitAllAnswers 関数を以下に置き換え
-
     private func submitAllAnswers() {
         Task {
-            guard let uid = authViewModel.userSub else { return }
-            
-            // ★★★ 修正: 記述式の有無を判定して渡す ★★★
-            let hasEssay = question.quizItems.contains { $0.type == . essay }
+            let hasEssay = question.quizItems.contains { $0.type == .essay }
             
             let success = await viewModel.submitAllAnswers(
                 questionId: question.questionId,
                 answers: userAnswers,
-                hasEssay: hasEssay  // ★★★ 追加 ★★★
+                hasEssay: hasEssay
             )
             
             await MainActor.run {
                 if success {
                     isInCorrect = false
-                    showResult = true
+                    
+                    if subscriptionManager.isPremium {
+                        showResult = true
+                    } else {
+                        adManager.showAd {
+                            showResult = true
+                        }
+                    }
                 }
             }
         }
@@ -194,6 +212,8 @@ struct QuizView: View {
         }
     }
 }
+
+// MARK: - Subviews
 
 struct ChoiceQuestionView: View {
     let item: QuizItem
@@ -252,5 +272,45 @@ struct FillInQuestionView: View {
             }
         }
         .padding()
+    }
+}
+
+struct QuizEssayQuestionView: View {
+    let item: QuizItem
+    @Binding var answer: String
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("あなたの回答:")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            
+            TextEditor(text: $answer)
+                .frame(height: 200)
+                .padding(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                )
+            
+            Text("※ 入力した内容は出題者に送られます")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .padding()
+    }
+}
+
+struct QuizCompleteViewWrapper: View {
+    let question: Question
+    let hasEssay: Bool
+    let dismissAction: () -> Void
+    
+    var body: some View {
+        QuizCompleteView(
+            question: question,
+            hasEssay: hasEssay,
+            onClose: dismissAction
+        )
     }
 }

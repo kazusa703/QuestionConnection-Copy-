@@ -3,6 +3,8 @@ import SwiftUI
 struct QuizCompleteView: View {
     let question: Question
     let hasEssay: Bool
+    var onClose: () -> Void
+    
     @EnvironmentObject private var authViewModel: AuthViewModel
     @EnvironmentObject private var profileViewModel: ProfileViewModel
     @Environment(\.dismiss) var dismiss
@@ -45,7 +47,6 @@ struct QuizCompleteView: View {
                 .background(Color.green.opacity(0.1))
                 .cornerRadius(12)
                 
-                // ★★★ 追加: 出題者からのメッセージ表示 ★★★
                 if let inviteMessage = question.dmInviteMessage, !inviteMessage.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("出題者からのメッセージ")
@@ -65,9 +66,11 @@ struct QuizCompleteView: View {
             
             Spacer()
             
-            // ★★★ 修正: ボタンの動作を変更 ★★★
             if hasEssay {
-                Button(action: { dismiss() }) {
+                Button(action: {
+                    dismiss()
+                    onClose()
+                }) {
                     Text("閉じる")
                         .frame(maxWidth: .infinity)
                         .padding(12)
@@ -76,7 +79,6 @@ struct QuizCompleteView: View {
                         .cornerRadius(8)
                 }
             } else {
-                // 記述式なしの場合：DM送信画面へ遷移
                 Button(action: { navigateToInitialDM = true }) {
                     HStack {
                         Image(systemName: "envelope.fill")
@@ -89,7 +91,10 @@ struct QuizCompleteView: View {
                     .cornerRadius(8)
                 }
                 
-                Button(action: { dismiss() }) {
+                Button(action: {
+                    dismiss()
+                    onClose()
+                }) {
                     Text("あとで")
                         .frame(maxWidth: .infinity)
                         .padding(12)
@@ -101,7 +106,6 @@ struct QuizCompleteView: View {
         }
         .padding(20)
         .presentationDetents([.fraction(0.5)])
-        // ★★★ 追加: DM画面への遷移 ★★★
         .sheet(isPresented: $navigateToInitialDM) {
             NavigationStack {
                 InitialDMView(
@@ -113,26 +117,4 @@ struct QuizCompleteView: View {
             }
         }
     }
-}
-
-#Preview {
-    QuizCompleteView(
-        question: Question(
-            questionId: "1",
-            title: "test",
-            purpose: "test",
-            tags: [],
-            remarks: "remarks",
-            authorId: "auth1",
-            quizItems: [],
-            createdAt: "2025-01-01",
-            dmInviteMessage: nil,
-            shareCode: "code",
-            answerCount: 0,
-            pendingCount: 0
-        ),
-        hasEssay: false
-    )
-    .environmentObject(AuthViewModel())
-    .environmentObject(ProfileViewModel(authViewModel: AuthViewModel()))
 }
