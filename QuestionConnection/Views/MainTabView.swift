@@ -43,16 +43,17 @@ struct MainTabView: View {
             // 4. プロフィールタブ
             NavigationStack(path: $navManager.profilePath) {
                 ProfileView(
-                    userId: authViewModel.userSub ?? "",
-                    isMyProfile: true,
-                    authViewModel: authViewModel
+                    userId: authViewModel.userSub ??  "",
+                    isMyProfile: true
+                    // ★★★ authViewModel 引数を削除 ★★★
                 )
             }
-            .tabItem {
+            . tabItem {
                 Image(systemName: "person")
                 Text("プロフィール")
             }
-            .tag(3)
+            . tag(3)
+
         }
     }
 }

@@ -80,15 +80,22 @@ struct ContentView: View {
             .environment(\.showAuthenticationSheet, $showingAuthSheet)
             // --- Initial nickname check on app launch (if already signed in) ---
             .task {
-                 if authViewModel.isSignedIn {
-                     await checkNicknameAndShowSheetIfNeeded()
-                     // アプリ起動時(ログイン済みなら)にもブックマーク取得
-                     profileViewModel.handleSignIn()
-                     // ★★★ 追加: アプリ起動時に課金状態をサーバーと同期 ★★★
-                     try? await Task.sleep(nanoseconds: 1 * 1_000_000_000)
-                     await profileViewModel.syncPremiumStatus(isPremium: subscriptionManager.isPremium)
-                 }
-            }
+                             // ★ 修正: ここで userId を取り出すように変更
+                             if let userId = authViewModel.userSub, authViewModel.isSignedIn {
+                                 
+                                 await checkNicknameAndShowSheetIfNeeded()
+                                 
+                                 // ブックマークなどの初期データ取得
+                                 profileViewModel.handleSignIn()
+                                 
+                                 // ★★★ 追加: 自分のプロフィール画像などをサーバーから復元 ★★★
+                                 await profileViewModel.fetchMyProfile(userId: userId)
+                                 
+                                 // 課金状態の同期
+                                 try? await Task.sleep(nanoseconds: 1 * 1_000_000_000)
+                                 await profileViewModel.syncPremiumStatus(isPremium: subscriptionManager.isPremium)
+                             }
+                        }
     }
 
     /// Checks if the current user's nickname is set and shows the SetNicknameView if not.

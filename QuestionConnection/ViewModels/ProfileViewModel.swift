@@ -652,144 +652,122 @@ class ProfileViewModel: ObservableObject {
     
     // MARK: - Profile Image & Cache
     
-    func uploadProfileImage(userId: String, image: UIImage) async {
-        print("📸 [uploadProfileImage] 開始: userId=\(userId)")
-        print("📸 [uploadProfileImage] 元の画像サイズ: \(image.size)")
+    // MARK: - Profile Image & Cache
         
-        guard let idToken = await authViewModel.getValidIdToken() else {
-            print("🚨 [uploadProfileImage] エラー: 認証トークンが取得できませんでした")
-            await MainActor.run {
-                self.profileImageAlertMessage = "認証に失敗しました。"
-                self.showProfileImageAlert = true
-                self.isUploadingProfileImage = false
-            }
-            return
-        }
-        
-        await MainActor.run {
-            self.isUploadingProfileImage = true
-            defer {
-                    isUploadingProfileImage = false  // ★ 必ず false にする
-                }
-        }
-        
-        // リサイズ処理のログ
-        print("📸 [uploadProfileImage] 画像のリサイズと圧縮を開始します...")
-        guard let resizedImage = image.resized(toWidth: 500) else {
-            print("🚨 [uploadProfileImage] エラー: 画像のリサイズに失敗しました")
-            await MainActor.run {
-                self.profileImageAlertMessage = "画像の処理に失敗しました(リサイズ)。"
-                self.showProfileImageAlert = true
-                self.isUploadingProfileImage = false
-            }
-            return
-        }
-        print("📸 [uploadProfileImage] リサイズ成功: \(resizedImage.size)")
-        
-        guard let imageData = resizedImage.jpegData(compressionQuality: 0.7) else {
-            print("🚨 [uploadProfileImage] エラー: JPEGデータへの変換に失敗しました")
-            await MainActor.run {
-                self.profileImageAlertMessage = "画像の処理に失敗しました(JPEG変換)。"
-                self.showProfileImageAlert = true
-                self.isUploadingProfileImage = false
-            }
-            return
-        }
-        print("📸 [uploadProfileImage] データ作成成功: \(imageData.count) bytes (約\(imageData.count / 1024)KB)")
-        
-        let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("profileImage")
-        print("📸 [uploadProfileImage] 送信先URL: \(url.absoluteString)")
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
-        
-        let boundary = UUID().uuidString
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        
-        var body = Data()
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"profileImage\"; filename=\"profile.jpg\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
-        body.append(imageData)
-        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
-        request.httpBody = body
-        
-        print("📸 [uploadProfileImage] リクエスト送信中...")
-        
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+        func uploadProfileImage(userId: String, image: UIImage) async {
+            print("📸 [uploadProfileImage] 開始: userId=\(userId)")
             
-            if let httpResponse = response as? HTTPURLResponse {
-                print("📸 [uploadProfileImage] レスポンス受信: ステータスコード \(httpResponse.statusCode)")
-                
-                if let responseString = String(data: data, encoding: .utf8) {
-                    print("📸 [uploadProfileImage] レスポンス本文: \(responseString)")
+            guard let idToken = await authViewModel.getValidIdToken() else {
+                await MainActor.run {
+                    self.profileImageAlertMessage = "認証に失敗しました。"
+                    self.showProfileImageAlert = true
                 }
+                return
+            }
+            
+            await MainActor.run { self.isUploadingProfileImage = true }
+            defer { Task { @MainActor in self.isUploadingProfileImage = false } }
+            
+            // 1. 画像のリサイズとデータ化
+            guard let resizedImage = image.resized(toWidth: 500),
+                  let imageData = resizedImage.jpegData(compressionQuality: 0.8) else {
+                await MainActor.run {
+                    self.profileImageAlertMessage = "画像の処理に失敗しました。"
+                    self.showProfileImageAlert = true
+                }
+                return
+            }
+            print("📸 画像データ作成成功: \(imageData.count) bytes")
+            
+            let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("profileImage")
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
+            
+            // 2. Multipart/form-data の作成
+            let boundary = "Boundary-\(UUID().uuidString)"
+            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            
+            // データを安全に構築
+            let body = createMultipartBody(
+                data: imageData,
+                boundary: boundary,
+                filename: "profile.jpg",
+                mimeType: "image/jpeg"
+            )
+            request.httpBody = body
+            
+            // 3. 送信
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
                 
-                // ★★★ 修正: すべての UI 更新を 1 つの MainActor.run ブロックにまとめる ★★★
+                guard let httpResponse = response as? HTTPURLResponse else { return }
+                print("📸 ステータスコード: \(httpResponse.statusCode)")
+
                 await MainActor.run {
                     switch httpResponse.statusCode {
                     case 200...299:
-                        print("✅ [uploadProfileImage] アップロード成功")
+                        print("✅ アップロード成功")
+                        // レスポンスの解析とUI更新
                         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                             if let imageUrl = json["profileImageUrl"] as? String {
                                 self.userProfileImages[userId] = imageUrl
-                                print("📸 [uploadProfileImage] 新しい画像URLを保存: \(imageUrl)")
                             }
+                            // 残り回数の更新など
                             if let changeCount = json["changeCount"] as? Int,
                                let maxChanges = json["maxChanges"] as? Int {
                                 self.profileImageChangedCount = changeCount
                                 self.remainingProfileImageChanges = maxChanges - changeCount
                             }
-                            self.profileImageAlertMessage = "プロフィール画像をアップロードしました✓"
+                            self.profileImageAlertMessage = "プロフィール画像を変更しました"
                             self.showProfileImageAlert = true
                         }
                         
                     case 403:
-                        print("🚨 [uploadProfileImage] エラー: 403 Forbidden (回数制限など)")
-                        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                            if let changeCount = json["changeCount"] as? Int,
-                               let maxChanges = json["maxChanges"] as? Int {
-                                self.profileImageChangedCount = changeCount
-                                self.remainingProfileImageChanges = maxChanges - changeCount
-                            }
-                            if let nextDate = json["nextAvailableDate"] as? String {
-                                self.profileImageAlertMessage = "今月のプロフィール変更の上限に達しました\n(\(nextDate)以降に再度お試しください)"
-                            } else {
-                                self.profileImageAlertMessage = "今月のプロフィール変更の上限に達しました"
-                            }
-                        } else {
-                            self.profileImageAlertMessage = "今月のプロフィール変更の上限に達しました"
-                        }
+                        // 回数制限など
+                        self.profileImageAlertMessage = "今月の変更回数上限に達しています"
                         self.showProfileImageAlert = true
                         
                     case 413:
-                        print("🚨 [uploadProfileImage] エラー: 413 Payload Too Large (サイズ超過)")
-                        self.profileImageAlertMessage = "画像ファイルが大きすぎます（最大10MB）"
+                        self.profileImageAlertMessage = "画像サイズが大きすぎます"
                         self.showProfileImageAlert = true
                         
                     default:
-                        print("🚨 [uploadProfileImage] エラー: 予期せぬステータスコード")
-                        self.profileImageAlertMessage = "画像のアップロードに失敗しました（エラー: \(httpResponse.statusCode)）"
+                        let errorMsg = String(data: data, encoding: .utf8) ?? ""
+                        print("Server Error: \(errorMsg)")
+                        self.profileImageAlertMessage = "アップロードエラー (\(httpResponse.statusCode))"
                         self.showProfileImageAlert = true
                     }
-                    
-                    // ★★★ 修正: ローディング終了を同じブロック内で実行 ★★★
-                    self.isUploadingProfileImage = false
                 }
-            }
-        } catch {
-            print("🚨 [uploadProfileImage] 通信エラー発生: \(error)")
-            await MainActor.run {
-                self.profileImageAlertMessage = "エラーが発生しました: \(error.localizedDescription)"
-                self.showProfileImageAlert = true
-                self.isUploadingProfileImage = false
+            } catch {
+                print("🚨 通信エラー: \(error)")
+                await MainActor.run {
+                    self.profileImageAlertMessage = "通信エラーが発生しました"
+                    self.showProfileImageAlert = true
+                }
             }
         }
         
-        print("📸 [uploadProfileImage] 処理終了")
-    }
+        // ヘルパー関数: 安全なMultipartデータ作成
+        private func createMultipartBody(data: Data, boundary: String, filename: String, mimeType: String) -> Data {
+            var body = Data()
+            let lineBreak = "\r\n"
+            
+            // --Boundary
+            body.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
+            // Content-Disposition
+            body.append("Content-Disposition: form-data; name=\"profileImage\"; filename=\"\(filename)\"\(lineBreak)".data(using: .utf8)!)
+            // Content-Type
+            body.append("Content-Type: \(mimeType)\(lineBreak)\(lineBreak)".data(using: .utf8)!)
+            // 画像データ本体
+            body.append(data)
+            // 改行
+            body.append(lineBreak.data(using: .utf8)!)
+            // --Boundary--
+            body.append("--\(boundary)--\(lineBreak)".data(using: .utf8)!)
+            
+            return body
+        }
     
     func fetchNickname(userId: String) async -> String {
         if let cached = userNicknames[userId] {

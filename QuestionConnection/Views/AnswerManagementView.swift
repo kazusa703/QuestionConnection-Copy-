@@ -41,18 +41,34 @@ struct AnswerManagementView: View {
                         ProgressView()
                         Spacer()
                     }
+                    .listRowSeparator(.hidden)
                 } else if filteredLogs.isEmpty {
                     Text(showOnlyPending ? "未採点の回答はありません" : "回答はありません")
                         .foregroundColor(.secondary)
                         .padding()
+                        .listRowSeparator(.hidden)
                 } else {
                     ForEach(filteredLogs) { log in
-                        NavigationLink(destination: GradingDetailView(log: log)
-                            .environmentObject(profileViewModel)
-                            .environmentObject(dmViewModel)
-                            .environmentObject(authViewModel)
-                        ) {
-                            AnswerLogRowView(log: log)
+                        NavigationLink(destination: GradingDetailView(log: log)) {
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    if let nickname = log.userNickname, !nickname.isEmpty {
+                                        Text(nickname).font(.headline)
+                                    } else {
+                                        Text("ID: \(log.userId.prefix(6))...").font(.subheadline)
+                                    }
+                                    Text(statusText(log.status))
+                                        .font(.caption)
+                                        .foregroundColor(statusColor(log.status))
+                                }
+                                Spacer()
+                                // 記述式が含まれる場合はスコアより「未採点」を強調しても良い
+                                if log.status == "pending_review" {
+                                    Image(systemName: "pencil").foregroundColor(.orange)
+                                } else {
+                                    Text("\(log.score)/\(log.total)")
+                                }
+                            }
                         }
                     }
                 }
@@ -63,66 +79,6 @@ struct AnswerManagementView: View {
         .task {
             await profileViewModel.fetchAnswerLogs(questionId: question.questionId)
         }
-        .refreshable {
-            await profileViewModel.fetchAnswerLogs(questionId: question.questionId)
-        }
-    }
-}
-
-// 回答者一覧の行ビュー
-struct AnswerLogRowView: View {
-    let log: AnswerLogItem
-    
-    var body: some View {
-        HStack {
-            // ユーザー情報
-            VStack(alignment: .leading, spacing: 4) {
-                if let nickname = log.userNickname, !nickname.isEmpty {
-                    Text(nickname)
-                        .font(.headline)
-                } else {
-                    Text("ID: \(log.userId.prefix(8))...")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-                
-                Text(statusText(log.status))
-                    .font(.caption)
-                    .foregroundColor(statusColor(log.status))
-            }
-            
-            Spacer()
-            
-            // スコアまたはステータスアイコン
-            if log.status == "pending_review" {
-                // 記述式が含まれる場合は採点アイコン
-                HStack(spacing: 4) {
-                    Image(systemName: "pencil.circle.fill")
-                        .foregroundColor(.orange)
-                    Text("採点待ち")
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                }
-            } else {
-                // 採点済みの場合はスコア表示
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("\(log.score)/\(log.total)")
-                        .font(.headline)
-                        .foregroundColor(log.status == "approved" ? .green : .red)
-                    
-                    if log.status == "approved" {
-                        Text("DM可")
-                            .font(.caption2)
-                            .foregroundColor(.green)
-                    }
-                }
-            }
-            
-            Image(systemName: "chevron.right")
-                .font(.caption)
-                .foregroundColor(.gray)
-        }
-        .padding(.vertical, 8)
     }
     
     private func statusText(_ status: String) -> String {
@@ -130,6 +86,7 @@ struct AnswerLogRowView: View {
         case "pending_review": return "⚠️ 採点待ち"
         case "approved": return "✅ 承認済み"
         case "rejected": return "❌ 不正解"
+        case "rejected_auto": return "❌ 自動採点で不正解"
         case "completed": return "✅ 完了"
         default: return status
         }
@@ -139,7 +96,7 @@ struct AnswerLogRowView: View {
         switch status {
         case "pending_review": return .orange
         case "approved": return .green
-        case "rejected": return .red
+        case "rejected", "rejected_auto": return .red
         default: return .gray
         }
     }

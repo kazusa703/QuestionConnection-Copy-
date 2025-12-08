@@ -152,14 +152,27 @@ struct DMListView: View {
         .navigationTitle("DM一覧")
         .searchable(text: $searchText, prompt: "タイトル、ニックネームで検索")
         .onAppear {
-            if authViewModel.isSignedIn && !isInitialFetchDone {
-                dmViewModel.setAuthViewModel(authViewModel)
-                fetchThreads()
-                isInitialFetchDone = true
-                loadFavorites()
-                loadDeletedThreads()
-            }
-        }
+                    if authViewModel.isSignedIn { // ★ 条件を簡素化
+                        dmViewModel.setAuthViewModel(authViewModel)
+                        
+                        // スレッド一覧を取得
+                        // fetchThreads() は内部で fetchAllNicknames を呼ぶように修正したほうが良いですが
+                        // ここでは非同期で呼び出しをかけます
+                        Task {
+                            await dmViewModel.fetchThreads(userId: authViewModel.userSub ?? "")
+                            
+                            // スレッドが取得できたら、そのメンバーのアイコン情報を最新にする
+                            if !dmViewModel.threads.isEmpty {
+                                await fetchAllNicknames(for: dmViewModel.threads)
+                                await fetchLastMessagesForThreads(dmViewModel.threads)
+                            }
+                        }
+                        
+                        isInitialFetchDone = true
+                        loadFavorites()
+                        loadDeletedThreads()
+                    }
+                }
         .refreshable {
             if authViewModel.isSignedIn {
                 profileViewModel.userNicknames = [:]

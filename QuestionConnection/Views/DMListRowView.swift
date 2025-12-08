@@ -8,6 +8,10 @@ struct DMListRowView: View {
     let isFavorite: Bool
     let lastMessagePreview: String?
     
+    // ★ 追加: キャッシュ回避用の一意なID
+    // Viewが再生成されるたびに変わるので、常に最新の画像を読みに行きます
+    @State private var cacheBuster = UUID().uuidString
+    
     private var opponentId: String? {
         guard let myUserId = authViewModel.userSub else { return nil }
         return thread.participants.first(where: { $0 != myUserId })
@@ -17,13 +21,8 @@ struct DMListRowView: View {
         guard let opponentId else { return "不明なユーザー" }
 
         if let cached = profileViewModel.userNicknames[opponentId] {
-            if cached.isEmpty {
-                return "（未設定）"
-            } else {
-                return cached
-            }
+            return cached.isEmpty ? "（未設定）" : cached
         }
-
         return "読み込み中..."
     }
     
@@ -34,13 +33,11 @@ struct DMListRowView: View {
 
     private var isUnread: Bool {
         guard let myUserId = authViewModel.userSub else { return false }
-        
-        let unread = ThreadReadTracker.shared.isUnread(
+        return ThreadReadTracker.shared.isUnread(
             threadLastUpdated: thread.lastUpdated,
             userId: myUserId,
             threadId: thread.threadId
         )
-        return unread
     }
     
     private var formattedMessageDate: String {
@@ -70,24 +67,42 @@ struct DMListRowView: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) { // spacingを少し広げました
-            // --- プロフィール画像 (サイズ変更: 40 -> 56) ---
-            if let imageUrl = opponentProfileImageUrl, let url = URL(string: imageUrl) {
-                AsyncImage(url: url) { image in
-                    image
-                        .resizable()
-                        .scaledToFill()
-                } placeholder: {
-                    Circle()
-                        .fill(Color.gray.opacity(0.3))
+        HStack(alignment: .center, spacing: 12) {
+            // --- プロフィール画像表示 ---
+            if let imageUrl = opponentProfileImageUrl,
+               // ★ 修正: URLにクエリパラメータをつけてキャッシュを無効化
+               let url = URL(string: "\(imageUrl)?v=\(cacheBuster)") {
+                
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    case .failure(_):
+                        // 読み込み失敗時はデフォルトアイコン
+                        Image(systemName: "person.crop.circle.fill")
+                            .resizable()
+                            .scaledToFill()
+                            .foregroundColor(.gray)
+                    case .empty:
+                        // 読み込み中
+                        ProgressView()
+                    @unknown default:
+                        EmptyView()
+                    }
                 }
-                .frame(width: 56, height: 56) // ★ここを大きくしました
+                .frame(width: 56, height: 56)
                 .clipShape(Circle())
+                // 背景色をつけて、画像が透過PNGだった場合などに備える
+                .background(Circle().fill(Color.gray.opacity(0.1)))
+                
             } else {
+                // URLがない場合のデフォルト
                 Image(systemName: "person.crop.circle.fill")
                     .resizable()
                     .scaledToFill()
-                    .frame(width: 56, height: 56) // ★ここを大きくしました
+                    .frame(width: 56, height: 56)
                     .foregroundColor(.gray)
             }
             
@@ -136,8 +151,8 @@ struct DMListRowView: View {
         }
         .contentShape(Rectangle())
         .padding(.vertical, 8)
-        
         .task {
+            // 表示されたタイミングで確実に最新情報を取得しにいく
             guard let opponentId else { return }
             _ = await profileViewModel.fetchNicknameAndImage(userId: opponentId)
         }

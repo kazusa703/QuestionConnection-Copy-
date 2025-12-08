@@ -5,7 +5,8 @@ struct ProfileView: View {
     let userId: String
     let isMyProfile: Bool
     
-    @StateObject private var viewModel: ProfileViewModel
+    // 親から受け取るViewModel
+    @EnvironmentObject var viewModel: ProfileViewModel
     @EnvironmentObject var authViewModel: AuthViewModel
     @EnvironmentObject var dmViewModel: DMViewModel
     
@@ -30,10 +31,9 @@ struct ProfileView: View {
     // 画像選択用
     @State private var selectedItem: PhotosPickerItem? = nil
 
-    init(userId: String, isMyProfile: Bool, authViewModel: AuthViewModel) {
+    init(userId: String, isMyProfile: Bool) {
         self.userId = userId
         self.isMyProfile = isMyProfile
-        _viewModel = StateObject(wrappedValue: ProfileViewModel(authViewModel: authViewModel))
     }
     
     var body: some View {
@@ -132,7 +132,7 @@ struct ProfileView: View {
     
     private var profileHeader: some View {
         VStack(spacing: 15) {
-            // ★ 自分なら PhotosPicker、他人ならただの画像
+            // アイコン
             if isMyProfile {
                 PhotosPicker(selection: $selectedItem, matching: .images) {
                     profileImageContent
@@ -149,13 +149,11 @@ struct ProfileView: View {
                     Task {
                         if let data = try? await newItem?.loadTransferable(type: Data.self),
                            let uiImage = UIImage(data: data) {
-                            // 画像アップロード実行
                             await viewModel.uploadProfileImage(userId: userId, image: uiImage)
                         }
                     }
                 }
             } else {
-                // 他人の場合はタップできないただの画像
                 profileImageContent
             }
             
@@ -173,7 +171,6 @@ struct ProfileView: View {
             }
         }
         .padding()
-        // ★ アップロード結果のアラート
         .alert("プロフィール画像", isPresented: $viewModel.showProfileImageAlert) {
             Button("OK") {}
         } message: {
@@ -181,16 +178,45 @@ struct ProfileView: View {
         }
     }
     
-    // ★ 画像表示部分の切り出し
+    // ★★★ 修正: 画像表示部分にデバッグログを追加 ★★★
     private var profileImageContent: some View {
         Group {
-            if let imageUrl = viewModel.userProfileImages[userId], let url = URL(string: imageUrl) {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    ProgressView()
+            if viewModel.isUploadingProfileImage {
+                ProgressView()
+                    .frame(width: 100, height: 100)
+            } else if let imageUrl = viewModel.userProfileImages[userId] {
+                // デバッグログ
+                let _ = print("🖼️ [ProfileView] imageUrl = \(imageUrl)")
+                let _ = print("🖼️ [ProfileView] userId = \(userId)")
+                
+                if let url = URL(string: imageUrl) {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .empty:
+                            let _ = print("🖼️ [AsyncImage] Loading...")
+                            ProgressView()
+                        case .success(let image):
+                            let _ = print("🖼️ [AsyncImage] Success!")
+                            image.resizable().scaledToFill()
+                        case .failure(let error):
+                            let _ = print("🖼️ [AsyncImage] Failed: \(error)")
+                            Image(systemName: "person.circle.fill")
+                                .resizable()
+                                .foregroundColor(.gray)
+                        @unknown default:
+                            Image(systemName: "person.circle.fill")
+                                .resizable()
+                                .foregroundColor(.gray)
+                        }
+                    }
+                } else {
+                    let _ = print("🖼️ [ProfileView] Invalid URL string")
+                    Image(systemName: "person.circle.fill")
+                        .resizable()
+                        .foregroundColor(.gray)
                 }
             } else {
+                let _ = print("🖼️ [ProfileView] No imageUrl in cache for userId: \(userId)")
                 Image(systemName: "person.circle.fill")
                     .resizable()
                     .foregroundColor(.gray)
@@ -249,7 +275,7 @@ struct ProfileView: View {
         }
     }
     
-    // MARK: - Graded Answers Section (Tabs & Badges)
+    // MARK: - Graded Answers Section
     
     private var gradedAnswersSection: some View {
         DisclosureGroup(
@@ -294,6 +320,7 @@ struct ProfileView: View {
                     Spacer()
                     
                     let pendingCount = viewModel.myGradedAnswers.filter { $0.status == "pending_review" }.count
+                    
                     if pendingCount > 0 {
                         Text("\(pendingCount)")
                             .font(.caption2)
@@ -328,11 +355,10 @@ struct ProfileView: View {
     }
     
     // MARK: - Created Questions Section
-         
+    
     private var createdQuestionsSection: some View {
         Group {
             if isMyProfile {
-                // 自分（作成者）の場合は、MyQuestionsDetailView へ遷移するボタンだけを表示
                 NavigationLink(destination: MyQuestionsDetailView(
                     questions: viewModel.myQuestions,
                     isLoadingMyQuestions: viewModel.isLoadingMyQuestions,
@@ -348,7 +374,6 @@ struct ProfileView: View {
                         
                         Spacer()
                         
-                        // 件数を表示
                         if !viewModel.myQuestions.isEmpty {
                             Text("\(viewModel.myQuestions.count)")
                                 .font(.caption)
@@ -366,7 +391,6 @@ struct ProfileView: View {
                     .cornerRadius(10)
                 }
             } else {
-                // 他人のプロフィールの場合は、既存の開閉リスト (DisclosureGroup) を維持
                 DisclosureGroup(
                     isExpanded: $isCreatedQuestionsExpanded,
                     content: {
@@ -379,7 +403,6 @@ struct ProfileView: View {
                         } else {
                             LazyVStack {
                                 ForEach(viewModel.myQuestions) { question in
-                                    // 他人が見る場合は常に回答画面へ
                                     NavigationLink(destination: QuestionDetailView(question: question)) {
                                         QuestionRowView(question: question)
                                     }
