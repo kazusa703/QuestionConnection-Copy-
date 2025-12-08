@@ -30,6 +30,9 @@ struct ProfileView: View {
     
     // 画像選択用
     @State private var selectedItem: PhotosPickerItem? = nil
+    
+    // ★★★ 追加: 画像キャッシュ回避用のID ★★★
+    @State private var cacheBuster = UUID().uuidString
 
     init(userId: String, isMyProfile: Bool) {
         self.userId = userId
@@ -150,6 +153,8 @@ struct ProfileView: View {
                         if let data = try? await newItem?.loadTransferable(type: Data.self),
                            let uiImage = UIImage(data: data) {
                             await viewModel.uploadProfileImage(userId: userId, image: uiImage)
+                            // ★★★ 更新後にキャッシュバスターを更新して画像を再読み込みさせる ★★★
+                            cacheBuster = UUID().uuidString
                         }
                     }
                 }
@@ -178,45 +183,33 @@ struct ProfileView: View {
         }
     }
     
-    // ★★★ 修正: 画像表示部分にデバッグログを追加 ★★★
+    // ★★★ 修正: キャッシュ回避ロジックを適用 ★★★
     private var profileImageContent: some View {
         Group {
             if viewModel.isUploadingProfileImage {
                 ProgressView()
                     .frame(width: 100, height: 100)
-            } else if let imageUrl = viewModel.userProfileImages[userId] {
-                // デバッグログ
-                let _ = print("🖼️ [ProfileView] imageUrl = \(imageUrl)")
-                let _ = print("🖼️ [ProfileView] userId = \(userId)")
+            } else if let imageUrl = viewModel.userProfileImages[userId],
+                      // URLにランダムな文字列をつけて強制的に再読み込みさせる
+                      let url = URL(string: "\(imageUrl)?v=\(cacheBuster)") {
                 
-                if let url = URL(string: imageUrl) {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .empty:
-                            let _ = print("🖼️ [AsyncImage] Loading...")
-                            ProgressView()
-                        case .success(let image):
-                            let _ = print("🖼️ [AsyncImage] Success!")
-                            image.resizable().scaledToFill()
-                        case .failure(let error):
-                            let _ = print("🖼️ [AsyncImage] Failed: \(error)")
-                            Image(systemName: "person.circle.fill")
-                                .resizable()
-                                .foregroundColor(.gray)
-                        @unknown default:
-                            Image(systemName: "person.circle.fill")
-                                .resizable()
-                                .foregroundColor(.gray)
-                        }
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .empty:
+                        ProgressView()
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    case .failure(_):
+                        Image(systemName: "person.circle.fill")
+                            .resizable()
+                            .foregroundColor(.gray)
+                    @unknown default:
+                        Image(systemName: "person.circle.fill")
+                            .resizable()
+                            .foregroundColor(.gray)
                     }
-                } else {
-                    let _ = print("🖼️ [ProfileView] Invalid URL string")
-                    Image(systemName: "person.circle.fill")
-                        .resizable()
-                        .foregroundColor(.gray)
                 }
             } else {
-                let _ = print("🖼️ [ProfileView] No imageUrl in cache for userId: \(userId)")
                 Image(systemName: "person.circle.fill")
                     .resizable()
                     .foregroundColor(.gray)

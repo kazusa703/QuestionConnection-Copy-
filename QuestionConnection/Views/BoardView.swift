@@ -197,57 +197,58 @@ struct BoardView: View {
         .navigationTitle("掲示板")
         // ツールバー
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                HStack(spacing: 12) {
-                    // 1. 並び替えメニュー
-                    Menu {
-                        Button(action: { sortOption = .newest }) {
-                            HStack {
-                                Text("最新順")
-                                Spacer()
-                                if sortOption == .newest { Image(systemName: "checkmark") }
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        HStack(spacing: 12) {
+                            // 1. 並び替えメニュー
+                            Menu {
+                                Button(action: { sortOption = .newest }) {
+                                    HStack {
+                                        Text("最新順")
+                                        Spacer()
+                                        if sortOption == .newest { Image(systemName: "checkmark") }
+                                    }
+                                }
+                                Button(action: { sortOption = .oldest }) {
+                                    HStack {
+                                        Text("古い順")
+                                        Spacer()
+                                        if sortOption == .oldest { Image(systemName: "checkmark") }
+                                    }
+                                }
+                                Button(action: {
+                                    sortOption = .random
+                                    reshuffleRandomQuestions()
+                                }) {
+                                    HStack {
+                                        Text("ランダム")
+                                        Spacer()
+                                        if sortOption == .random { Image(systemName: "checkmark") }
+                                    }
+                                }
+                            } label: {
+                                Image(systemName: "arrow.up.arrow.down")
+                            }
+                            
+                            // 2. ブックマークボタン
+                            Button(action: {
+                                if authViewModel.isSignedIn {
+                                    showingOnlyBookmarks.toggle()
+                                }
+                            }) {
+                                Image(systemName: showingOnlyBookmarks ? "bookmark.fill" : "bookmark")
+                                    .foregroundColor(showingOnlyBookmarks ? .orange : .gray)
+                            }
+                            
+                            // 3. 絞り込みボタン（★ここを修正しました）
+                            Button {
+                                showingFilterSheet = true
+                            } label: {
+                                // スペースを削除して正しいSF Symbol名に修正
+                                Image(systemName: (!selectedPurpose.isEmpty || !selectedTags.isEmpty) ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                             }
                         }
-                        Button(action: { sortOption = .oldest }) {
-                            HStack {
-                                Text("古い順")
-                                Spacer()
-                                if sortOption == .oldest { Image(systemName: "checkmark") }
-                            }
-                        }
-                        Button(action: {
-                            sortOption = .random
-                            reshuffleRandomQuestions()
-                        }) {
-                            HStack {
-                                Text("ランダム")
-                                Spacer()
-                                if sortOption == .random { Image(systemName: "checkmark") }
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "arrow.up.arrow.down")
-                    }
-                    
-                    // 2. ブックマークボタン
-                    Button(action: {
-                        if authViewModel.isSignedIn {
-                            showingOnlyBookmarks.toggle()
-                        }
-                    }) {
-                        Image(systemName: showingOnlyBookmarks ? "bookmark.fill" : "bookmark")
-                            .foregroundColor(showingOnlyBookmarks ? .orange : .gray)
-                    }
-                    
-                    // 3. 絞り込みボタン
-                    Button {
-                        showingFilterSheet = true
-                    } label: {
-                        Image(systemName: (!selectedPurpose.isEmpty || !selectedTags.isEmpty) ? "line.3. horizontal. decrease. circle. fill" : "line.3. horizontal.decrease.circle")
                     }
                 }
-            }
-        }
         
         // 統合絞り込みシート
         .sheet(isPresented: $showingFilterSheet) {
