@@ -30,23 +30,34 @@ struct AnswerPendingView: View {
             // 回答内容の表示
             VStack(alignment: .leading, spacing: 12) {
                 Text("あなたの回答")
-                    .font(.headline)
-                
-                ForEach(log.details.filter { $0.type == "essay" }) { detail in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("記述式問題")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        Text(detail.userAnswer?.displayString ?? "(回答なし)")
-                            .padding(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.blue.opacity(0.05))
-                            .cornerRadius(8)
+                        .font(.headline)
+                    
+                    ForEach(log.details.filter { $0.type == "essay" }) { detail in
+                        VStack(alignment: .leading, spacing: 8) {
+                            // ★ 問題文を表示
+                            if let questionText = detail.questionText, !questionText.isEmpty {
+                                Text("Q: \(questionText)")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.primary)
+                            }
+                            
+                            Text("記述式問題")
+                                .font(.caption)
+                                .foregroundColor(. secondary)
+                            
+                            Text(detail.userAnswer?.displayString ??  "(回答なし)")
+                                .padding(12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.blue.opacity(0.05))
+                                .cornerRadius(8)
+                        }
+                        .padding()
+                        .background(Color(UIColor.secondarySystemBackground))
+                        .cornerRadius(10)
                     }
                 }
-            }
-            .padding()
+                .padding()
             
             Spacer()
             

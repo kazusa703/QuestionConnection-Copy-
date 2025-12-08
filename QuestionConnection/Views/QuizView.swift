@@ -110,11 +110,12 @@ struct QuizView: View {
         .sheet(isPresented: $showResult) {
             if isInCorrect {
                 QuizIncorrectView(
-                    currentItem: question.quizItems[currentQuizIndex],
-                    userAnswer: userAnswers[question.quizItems[currentQuizIndex].id] ?? [:],
-                    hasEssay: hasEssay
-                )
-            } else {
+                            currentItem: question.quizItems[currentQuizIndex],
+                            userAnswer: userAnswers[question.quizItems[currentQuizIndex].id] ?? [:],
+                            hasEssay: hasEssay
+                        )
+                        .environmentObject(navManager)  // ★★★ 追加 ★★★
+                    } else {
                 QuizCompleteViewWrapper(
                     question: question,
                     hasEssay: hasEssay,

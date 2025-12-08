@@ -35,16 +35,41 @@ struct AnswerResultView: View {
 
                 // 回答内容の表示
                 Text("あなたの回答").font(.headline)
+                
                 ForEach(log.details) { detail in
-                    VStack(alignment: .leading) {
-                        Text(detail.type == "essay" ? "記述式" : "選択/穴埋め")
-                            .font(.caption).foregroundColor(.secondary)
-                        Text(detail.userAnswer?.displayString ?? "")
+                    VStack(alignment: .leading, spacing: 8) {
+                        // ★ 問題文を表示
+                        if let questionText = detail.questionText, !questionText.isEmpty {
+                            Text("Q: \(questionText)")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundColor(.primary)
+                        }
+                        
+                        Text(detail.type == "essay" ? "記述式" : (detail.type == "choice" ? "選択式" : "穴埋め"))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Text(detail.userAnswer?.displayString ?? "(回答なし)")
                             .padding()
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.blue.opacity(0.05))
+                            // 正誤によって背景色を変更
+                            .background(detail.isCorrect ? Color.green.opacity(0.05) : Color.red.opacity(0.05))
                             .cornerRadius(8)
+                        
+                        // ★ 正誤表示アイコン
+                        HStack {
+                            Image(systemName: detail.isCorrect ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                .foregroundColor(detail.isCorrect ? .green : .red)
+                            Text(detail.isCorrect ? "正解" : "不正解")
+                                .font(.caption)
+                                .foregroundColor(detail.isCorrect ? .green : .red)
+                        }
                     }
+                    .padding()
+                    .background(Color.white)
+                    .cornerRadius(10)
+                    .shadow(color: Color.black.opacity(0.05), radius: 2)
                 }
                 
                 Divider()
@@ -96,16 +121,15 @@ struct AnswerResultView: View {
     }
     
     func startDM() {
-        // DM開始処理 (前回のGradingDetailViewと同じロジック)
         Task {
             if let authorId = log.authorId,
-               let thread = await dmViewModel.findDMThread(with: authorId) { // 相手はAuthor
+               let thread = await dmViewModel.findDMThread(with: authorId) {
                 await MainActor.run {
                     self.createdThread = thread
                     self.navigateToDM = true
                 }
             } else {
-                // スレッド作成ロジック（省略可）
+                // スレッド作成ロジックが必要な場合はここに記述
             }
         }
     }

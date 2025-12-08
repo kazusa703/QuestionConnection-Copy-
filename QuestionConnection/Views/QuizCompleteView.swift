@@ -5,6 +5,7 @@ struct QuizCompleteView: View {
     let hasEssay: Bool
     @EnvironmentObject private var authViewModel: AuthViewModel
     @EnvironmentObject private var profileViewModel: ProfileViewModel
+    @EnvironmentObject var navManager: NavigationManager
     @Environment(\.dismiss) var dismiss
     
     // ★★★ 追加: 閉じるボタンのアクションを外部から注入可能にする ★★★

@@ -26,7 +26,7 @@ struct GradingDetailView: View {
         log.details.filter { $0.type != "essay" }
     }
     
-    // 全ての記述式が採点済みか判定
+    // 全ての記述式が採点済みか
     private var allEssaysGraded: Bool {
         essayDetails.allSatisfy { essayGrades[$0.itemId] != nil }
     }
@@ -35,29 +35,22 @@ struct GradingDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 
-                // 1. ヘッダー（回答者情報）
                 headerSection
                 
-                // 2. 自動採点エリア（選択式・穴埋め）
-                // ここで「不正解」があっても、下の記述式で挽回可能です
                 if !autoGradedDetails.isEmpty {
                     autoGradedSection
                 }
                 
-                // 3. 記述式採点エリア
-                // ここでの評価が最終合否を決めます
                 if !essayDetails.isEmpty {
                     essayGradingSection
                 }
                 
-                // 4. 採点実行ボタン
                 submitButtonSection
             }
             .padding()
         }
         .navigationTitle("回答詳細")
         .navigationBarTitleDisplayMode(.inline)
-        // 完了後の通知・遷移
         .sheet(isPresented: $showGradingNotification) {
             GradingNotificationView(
                 isPresented: $showGradingNotification,
@@ -255,48 +248,107 @@ struct GradingDetailView: View {
     
     private var submitButtonSection: some View {
         VStack(spacing: 12) {
-            Button(action: submitGrading) {
-                HStack {
-                    if profileViewModel.isJudging {
-                        ProgressView().tint(.white)
-                    } else {
-                        Image(systemName: "checkmark.seal.fill")
-                        Text("採点を確定する")
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding()
-                .background(allEssaysGraded ? Color.blue : Color.gray)
-                .foregroundColor(.white)
-                .cornerRadius(12)
-            }
-            .disabled(!allEssaysGraded || profileViewModel.isJudging)
+            // ★★★ 修正: ステータスに応じてボタンを切り替え ★★★
             
-            // 注釈（作成者の判断基準を補足）
-            if allEssaysGraded {
-                let approved = essayGrades.values.allSatisfy { $0 }
-                if approved {
-                    VStack(spacing: 4) {
-                        Text("※ 「正解」として回答者に通知され、DMが可能になります。")
-                            .font(.caption)
-                            .foregroundColor(.green)
-                            .fontWeight(.bold)
-                        Text("（自動採点の結果に関わらず合格となります）")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
+            if log.status == "approved" {
+                // 承認済み（DM許可）→ DMへボタン
+                Button(action: startDM) {
+                    HStack {
+                        Image(systemName: "envelope.fill")
+                        Text("DMへ")
                     }
+                    .frame(maxWidth: . infinity)
+                    .padding()
+                    .background(Color.green)
+                    .foregroundColor(. white)
+                    .cornerRadius(12)
+                }
+                
+                Text("✓ 採点済み - DMが可能です")
+                    .font(.caption)
+                    .foregroundColor(.green)
+                
+            } else if log.status == "rejected" || log.status == "rejected_auto" {
+                // 不正解または自動採点で不正解 → 採点済み（押せない）
+                Button(action: {}) {
+                    HStack {
+                        Image(systemName: "checkmark.seal.fill")
+                        Text("採点済み")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.gray)
+                    .foregroundColor(.white)
+                    .cornerRadius(12)
+                }
+                . disabled(true)
+                
+                if log.status == "rejected_auto" {
+                    Text("✓ 採点済み - 自動採点で不正解のためDMはできません")
+                        .font(.caption)
+                        .foregroundColor(.orange)
                 } else {
-                    Text("※ 「不正解」として通知されます。DMはできません。")
+                    Text("✓ 採点済み - 不正解のためDMはできません")
                         .font(.caption)
                         .foregroundColor(.red)
                 }
+                
             } else {
-                Text("すべての記述式問題を判定してください")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                // 未採点（pending_review）→ 採点を確定するボタン
+                Button(action: submitGrading) {
+                    HStack {
+                        if profileViewModel.isJudging {
+                            ProgressView().tint(.white)
+                        } else {
+                            Image(systemName: "checkmark.seal.fill")
+                            Text("採点を確定する")
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(allEssaysGraded ? Color.blue : Color.gray)
+                    .foregroundColor(.white)
+                    .cornerRadius(12)
+                }
+                .disabled(!allEssaysGraded || profileViewModel.isJudging)
+                
+                // 注釈
+                if allEssaysGraded {
+                    let allEssayApproved = essayGrades.values.allSatisfy { $0 }
+                    let hasAutoGradedIncorrect = autoGradedDetails.contains { !$0.isCorrect }
+                    
+                    if allEssayApproved {
+                        if hasAutoGradedIncorrect {
+                            VStack(spacing: 4) {
+                                Text("※ 自動採点で不正解があるため、DMはできません。")
+                                    .font(.caption)
+                                    .foregroundColor(.orange)
+                                    .fontWeight(.bold)
+                                Text("（記述式の結果は「正解」として回答者に通知されます）")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        } else {
+                            VStack(spacing: 4) {
+                                Text("※ 「正解」として回答者に通知され、DMが可能になります。")
+                                    .font(.caption)
+                                    .foregroundColor(.green)
+                                    .fontWeight(.bold)
+                            }
+                        }
+                    } else {
+                        Text("※ 「不正解」として通知されます。DMはできません。")
+                            . font(.caption)
+                            . foregroundColor(.red)
+                    }
+                } else {
+                    Text("すべての記述式問題を判定してください")
+                        .font(.caption)
+                        .foregroundColor(. secondary)
+                }
             }
         }
-        .padding(.top, 20)
+        .padding(. top, 20)
     }
     
     // MARK: - Logic
@@ -311,25 +363,28 @@ struct GradingDetailView: View {
         }
     }
     
+    // ★★★ 修正: 判定ロジックの変更 ★★★
     private func submitGrading() {
         Task {
-            // サーバーへ送信 (記述式の結果に基づいて合否が決まる)
             let success = await profileViewModel.submitEssayGrades(
                 logId: log.logId,
                 essayGrades: essayGrades
             )
             
             if success {
-                // ★★★ 修正: 記述式が全て正解なら、自動採点の結果に関わらず「合格」とする ★★★
                 let allEssayCorrect = essayGrades.values.allSatisfy { $0 == true }
+                // 自動採点で不正解があるかチェック
+                let hasAutoGradedIncorrect = autoGradedDetails.contains { !$0.isCorrect }
                 
-                if allEssayCorrect {
+                // 記述式が正解 かつ 自動採点も全問正解 の場合のみ、DM許可画面へ
+                if allEssayCorrect && !hasAutoGradedIncorrect {
                     showGradingNotification = true
                 } else {
+                    // それ以外（自動採点ミスあり、または記述式ミスあり）は、通知せずに閉じる
                     dismiss()
                 }
             } else {
-                print("採点送信失敗")
+                print("採点の送信に失敗しました")
             }
         }
     }

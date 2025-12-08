@@ -22,6 +22,7 @@ struct ContentView: View {
     // Access the shared ViewModels from the environment (will be injected by App)
     @EnvironmentObject private var authViewModel: AuthViewModel
     @EnvironmentObject private var profileViewModel: ProfileViewModel
+    @EnvironmentObject private var subscriptionManager: SubscriptionManager
 
     // State to control the presentation of the authentication sheet
     @State private var showingAuthSheet = false
@@ -52,13 +53,27 @@ struct ContentView: View {
                     Task {
                         await checkNicknameAndShowSheetIfNeeded()
                     }
-                    // ★★★ 追加: ログイン時にブックマーク取得をトリガー ★★★
+                    // ブックマーク取得をトリガー
                     profileViewModel.handleSignIn()
+                    // ★★★ 追加: ログイン時に課金状態をサーバーと同期 ★★★
+                    Task {
+                        // 少し待ってから送信（競合回避）
+                        try? await Task.sleep(nanoseconds: 1 * 1_000_000_000)
+                        await profileViewModel.syncPremiumStatus(isPremium: subscriptionManager.isPremium)
+                    }
                 } else {
                     // Close nickname sheet on sign-out (just in case)
                     showingSetNicknameSheet = false
-                    // ★★★ 追加: ログアウト時にブックマークをクリア ★★★
+                    // ログアウト時にブックマークをクリア
                     profileViewModel.handleSignOut()
+                }
+            }
+            // ★★★ 追加: 課金状態の変更を監視して同期 ★★★
+            .onChange(of: subscriptionManager.isPremium) { _, isPremium in
+                if authViewModel.isSignedIn {
+                    Task {
+                        await profileViewModel.syncPremiumStatus(isPremium: isPremium)
+                    }
                 }
             }
             // --- Make the auth sheet binding available to child views ---
@@ -67,8 +82,11 @@ struct ContentView: View {
             .task {
                  if authViewModel.isSignedIn {
                      await checkNicknameAndShowSheetIfNeeded()
-                     // ★★★ 追加: アプリ起動時(ログイン済みなら)にもブックマーク取得 ★★★
+                     // アプリ起動時(ログイン済みなら)にもブックマーク取得
                      profileViewModel.handleSignIn()
+                     // ★★★ 追加: アプリ起動時に課金状態をサーバーと同期 ★★★
+                     try? await Task.sleep(nanoseconds: 1 * 1_000_000_000)
+                     await profileViewModel.syncPremiumStatus(isPremium: subscriptionManager.isPremium)
                  }
             }
     }
@@ -80,7 +98,6 @@ struct ContentView: View {
         }
 
         // Fetch the latest nickname from the server (also updates cache)
-        // ★★★ 修正: idToken 引数を削除 ★★★ (適用済み)
         _ = await profileViewModel.fetchNickname(userId: userId)
 
         // Check the cached nickname
@@ -94,7 +111,7 @@ struct ContentView: View {
 }
 
 
-// MARK: - AuthenticationSheetView (変更なし)
+// MARK: - AuthenticationSheetView
 
 struct AuthenticationSheetView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
@@ -182,4 +199,3 @@ struct AuthenticationSheetView: View {
         } // End NavigationStack
     } // End body
 } // End struct AuthenticationSheetView
-

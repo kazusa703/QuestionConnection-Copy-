@@ -41,19 +41,34 @@ struct AnswerApprovedView: View {
             // ★ あなたの回答
             VStack(alignment: .leading, spacing: 8) {
                 Text("あなたの回答")
-                    .font(.headline)
-                
-                ForEach(log.details) { detail in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(detail.userAnswer?.displayString ?? "(回答なし)")
-                            .padding()
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.blue.opacity(0.05))
-                            .cornerRadius(8)
+                        . font(.headline)
+                    
+                    ForEach(log.details) { detail in
+                        VStack(alignment: .leading, spacing: 8) {
+                            // ★ 問題文を表示
+                            if let questionText = detail.questionText, !questionText.isEmpty {
+                                Text("Q: \(questionText)")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.primary)
+                            }
+                            
+                            Text(detail.type == "essay" ? "記述式" : (detail.type == "choice" ? "選択式" : "穴埋め"))
+                                .font(.caption)
+                                .foregroundColor(. secondary)
+                            
+                            Text(detail.userAnswer?.displayString ??  "(回答なし)")
+                                .padding()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.blue.opacity(0.05))
+                                .cornerRadius(8)
+                        }
+                        .padding()
+                        .background(Color(UIColor.secondarySystemBackground))
+                        .cornerRadius(10)
                     }
                 }
-            }
-            .padding(.horizontal)
+                . padding(. horizontal)
             
             // ★ 模範解答を見るボタン
             Button(action: fetchAndShowModelAnswer) {

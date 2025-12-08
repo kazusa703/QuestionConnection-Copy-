@@ -5,8 +5,8 @@ struct QuizIncorrectView: View {
     let userAnswer: [String: String]
     // ★★★ 追加: 記述式があるかどうかのフラグ ★★★
     let hasEssay: Bool
-    
-    @Environment(\.dismiss) var dismiss
+    @EnvironmentObject var navManager: NavigationManager
+       @Environment(\.dismiss) var dismiss
     
     var body: some View {
         VStack(spacing: 20) {

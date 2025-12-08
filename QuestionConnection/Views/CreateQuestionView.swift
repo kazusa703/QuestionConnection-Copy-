@@ -180,74 +180,111 @@ struct CreateQuestionView: View {
     }
     
     // ★★★ 修正: 入力バリデーションを追加 ★★★
-    private func handlePostButtonTap() {
-        // --- 0. 入力バリデーション ---
-        // 題名チェック
-        if title.trimmingCharacters(in: . whitespacesAndNewlines).isEmpty {
-            alertMessage = "題名が入力されていません。\n基本情報の欄を確認してください。"
-            showAlert = true
-            return
-        }
+    // MARK: - 投稿ボタン処理 (バリデーション付き)
         
-        // 目的チェック
-        if purpose.isEmpty {
-            alertMessage = "目的が選択されていません。"
-            showAlert = true
-            return
-        }
-        
-        // 問題文チェック (空の問題がないか)
-        for (index, item) in quizItems.enumerated() {
-            if item.questionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                alertMessage = "問題 \(index + 1) の文章が入力されていません。"
+        private func handlePostButtonTap() {
+            // --- 0. 入力バリデーション ---
+            
+            // 1. 題名チェック
+            if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                alertMessage = "題名が空白です。"
                 showAlert = true
                 return
             }
             
-            // 選択式の場合、正解が選ばれているか
-            if item.type == .choice {
-                if item.correctAnswerId.isEmpty {
-                    alertMessage = "問題 \(index + 1) の正解（◯）が選択されていません。"
+            // 2. 目的チェック
+            if purpose.isEmpty {
+                alertMessage = "目的が選択されていません。"
+                showAlert = true
+                return
+            }
+            
+            // 3. 各問題のチェック
+            for (index, item) in quizItems.enumerated() {
+                let qNum = index + 1
+                
+                // 問題文チェック
+                if item.questionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    alertMessage = "問題 \(qNum) の文章が空白です。"
                     showAlert = true
                     return
                 }
+                
+                // --- タイプ別の詳細チェック ---
+                switch item.type {
+                case .choice:
+                    // 選択肢の空白チェック
+                    for (cIndex, choice) in item.choices.enumerated() {
+                        if choice.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            alertMessage = "問題 \(qNum) の選択肢 \(cIndex + 1) が空白です。"
+                            showAlert = true
+                            return
+                        }
+                    }
+                    
+                    // 正解選択チェック
+                    if item.correctAnswerId.isEmpty {
+                        alertMessage = "問題 \(qNum) の正解（◯）が選択されていません。"
+                        showAlert = true
+                        return
+                    }
+                    
+                case .fillIn:
+                    // 穴埋めの正解チェック
+                    if item.fillInAnswers.isEmpty {
+                        alertMessage = "問題 \(qNum) に穴埋め箇所がありません。「穴」ボタンで作成してください。"
+                        showAlert = true
+                        return
+                    }
+                    // 各穴の正解テキストチェック
+                    for (key, val) in item.fillInAnswers {
+                        if val.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            alertMessage = "問題 \(qNum) の [\(key)] の正解が空白です。"
+                            showAlert = true
+                            return
+                        }
+                    }
+                    
+                case .essay:
+                    // 記述式は問題文さえあればOK（模範解答は任意）
+                    break
+                }
             }
-        }
-        // ----------------------------------------
-        
-        // --- 1. プレミアム機能のチェック (記述式制限) ---
-        let hasEssayQuestion = quizItems.contains { $0.type == . essay }
-        
-        if hasEssayQuestion && !subscriptionManager.isPremium {
-            alertMessage = "記述式問題の投稿はプレミアムプラン限定の機能です。\n設定画面からアップグレードしてください。"
-            showAlert = true
-            return
-        }
-        
-        // --- 2. 広告表示ロジック (3回に1回) ---
-        if subscriptionManager.isPremium {
-            // 有料会員なら即投稿
-            executePost()
-        } else {
-            // 無料会員: カウンターを更新して判定
-            let currentCount = UserDefaults.standard.integer(forKey: "postCount") + 1
-            UserDefaults.standard.set(currentCount, forKey: "postCount")
+            // ----------------------------------------
             
-            print("現在の投稿回数: \(currentCount)")
+            // --- 1. プレミアム機能のチェック ---
+            let hasEssayQuestion = quizItems.contains { $0.type == .essay }
             
-            // 3回に1回 (3で割り切れる時) だけ広告を表示
-            if currentCount % 3 == 0 {
-                isAdLoading = true
-                adManager.showAd {
-                    isAdLoading = false
+            if hasEssayQuestion && !subscriptionManager.isPremium {
+                alertMessage = "記述式問題の投稿はプレミアムプラン限定の機能です。\n設定画面からアップグレードしてください。"
+                showAlert = true
+                return
+            }
+            
+            // --- 2. 広告表示ロジック (3回に1回) ---
+            if subscriptionManager.isPremium {
+                // 有料会員なら即投稿
+                executePost()
+            } else {
+                // 無料会員: カウンターを更新して判定
+                let currentCount = UserDefaults.standard.integer(forKey: "postCount") + 1
+                UserDefaults.standard.set(currentCount, forKey: "postCount")
+                
+                print("現在の投稿回数: \(currentCount)")
+                
+                // 3回に1回 (3で割り切れる時) だけ広告を表示
+                if currentCount % 3 == 0 {
+                    isAdLoading = true
+                    adManager.showAd {
+                        isAdLoading = false
+                        executePost()
+                    }
+                } else {
+                    // それ以外は広告なしで投稿
                     executePost()
                 }
-            } else {
-                // それ以外は広告なしで投稿
-                executePost()
             }
         }
-    }
     
     private func executePost() {
         Task {
@@ -285,14 +322,28 @@ struct ChoiceQuestionEditor: View {
     var body: some View {
         TextField("問題文", text: $item.questionText)
         
-        ForEach($item.choices) { $choice in
+        // --- 選択肢のリスト（削除ボタン付き） ---
+        ForEach($item.choices.indices, id: \.self) { index in
             HStack {
+                // 正解選択ボタン
                 Button {
-                    item.correctAnswerId = choice.id
+                    item.correctAnswerId = item.choices[index].id
                 } label: {
-                    Image(systemName: item.correctAnswerId == choice.id ? "checkmark.circle.fill" : "circle")
+                    Image(systemName: item.correctAnswerId == item.choices[index].id ? "checkmark.circle.fill" : "circle")
                 }
-                TextField("選択肢", text: $choice.text)
+                
+                // 選択肢入力
+                TextField("選択肢", text: $item.choices[index].text)
+                
+                // ★★★ 追加: 削除ボタン (選択肢が2つより多い場合のみ表示) ★★★
+                if item.choices.count > 2 {
+                    Button(role: .destructive) {
+                        deleteChoice(at: index)
+                    } label: {
+                        Image(systemName: "trash")
+                            .foregroundColor(.red)
+                    }
+                }
             }
         }
         
@@ -300,8 +351,18 @@ struct ChoiceQuestionEditor: View {
             item.choices.append(Choice(id: UUID().uuidString, text: ""))
         }
     }
+    
+    // 削除処理
+    private func deleteChoice(at index: Int) {
+        let deletedId = item.choices[index].id
+        item.choices.remove(at: index)
+        
+        // もし正解として選ばれていた選択肢を消した場合は、正解設定をリセット
+        if item.correctAnswerId == deletedId {
+            item.correctAnswerId = ""
+        }
+    }
 }
-
 // 2. 穴埋めエディタ
 struct FillInQuestionEditor: View {
     @Binding var item: QuizItem
