@@ -24,6 +24,7 @@ struct ProfileView: View {
     @State private var showConversation = false
 
     @State private var selectedAnswerTab = "all"
+    @State private var isCreatedQuestionsExpanded = false
 
     init(userId: String, isMyProfile: Bool, authViewModel: AuthViewModel) {
         self.userId = userId
@@ -285,52 +286,88 @@ struct ProfileView: View {
         }
     }
     
-    // MARK: - Created Questions Section (Badges & Navigation Logic)
+    // MARK: - Created Questions Section (Tabs & Navigation Logic)
     
-    private var createdQuestionsSection: some View {
-        NavigationLink(destination: MyQuestionsDetailView(
-            questions: viewModel.myQuestions,
-            isLoadingMyQuestions: viewModel.isLoadingMyQuestions,
-            viewModel: viewModel
-        ).environmentObject(authViewModel)) {
-            HStack {
-                Image(systemName: "questionmark.folder")
-                    .foregroundColor(.accentColor)
-                Text(isMyProfile ? "自分が作成した質問" : "作成した質問")
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                
-                Spacer()
-                
-                // 未採点数バッジ
-                let totalPending = viewModel.myQuestions.compactMap { $0.pendingCount }.reduce(0, +)
-                if totalPending > 0 {
-                    Text("\(totalPending)")
-                        .font(.caption2)
-                        .fontWeight(.bold)
-                        .foregroundColor(.white)
-                        .padding(6)
-                        .background(Color.red)
-                        .clipShape(Circle())
+    // MARK: - Created Questions Section
+        
+        private var createdQuestionsSection: some View {
+            Group {
+                if isMyProfile {
+                    // ★★★ 修正: 自分（作成者）の場合は、MyQuestionsDetailView へ遷移するボタンだけを表示 ★★★
+                    // タブ機能やリスト表示は MyQuestionsDetailView に任せる
+                    NavigationLink(destination: MyQuestionsDetailView(
+                        questions: viewModel.myQuestions,
+                        isLoadingMyQuestions: viewModel.isLoadingMyQuestions,
+                        viewModel: viewModel
+                    )) {
+                        HStack {
+                            Image(systemName: "questionmark.folder")
+                                .foregroundColor(.accentColor)
+                            
+                            Text("自分が作成した質問")
+                                .font(.headline)
+                                .foregroundColor(.primary)
+                            
+                            Spacer()
+                            
+                            // 件数を表示
+                            if !viewModel.myQuestions.isEmpty {
+                                Text("\(viewModel.myQuestions.count)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .padding(6)
+                                    .background(Color.gray.opacity(0.2))
+                                    .clipShape(Circle())
+                            }
+                            
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.gray)
+                        }
+                        .padding()
+                        .background(Color(UIColor.secondarySystemBackground))
+                        .cornerRadius(10)
+                    }
+                } else {
+                    // 他人のプロフィールの場合は、既存の開閉リスト (DisclosureGroup) を維持
+                    // (他人は採点や分析をする必要がないため、シンプルなリストでOK)
+                    DisclosureGroup(
+                        isExpanded: $isCreatedQuestionsExpanded,
+                        content: {
+                            if viewModel.isLoadingMyQuestions {
+                                ProgressView().padding()
+                            } else if viewModel.myQuestions.isEmpty {
+                                Text("まだ質問を作成していません")
+                                    .foregroundColor(.secondary)
+                                    .padding()
+                            } else {
+                                LazyVStack {
+                                    ForEach(viewModel.myQuestions) { question in
+                                        // 他人が見る場合は常に回答画面へ
+                                        NavigationLink(destination: QuestionDetailView(question: question)) {
+                                            QuestionRowView(question: question)
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
+                                        Divider()
+                                    }
+                                }
+                            }
+                        },
+                        label: {
+                            HStack {
+                                Image(systemName: "questionmark.folder")
+                                    .foregroundColor(.accentColor)
+                                Text("作成した質問")
+                                    .font(.headline)
+                                    .foregroundColor(.primary)
+                                Spacer()
+                            }
+                            .padding(.vertical, 8)
+                        }
+                    )
                 }
-                
-                // 質問数
-                Text("\(viewModel.myQuestions.count)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(6)
-                    .background(Color.gray.opacity(0.2))
-                    .clipShape(Circle())
-                
-                Image(systemName: "chevron.right")
-                    .foregroundColor(.gray)
             }
-            .padding(.vertical, 8)
+            .padding(.horizontal)
         }
-        .buttonStyle(PlainButtonStyle())
-        .padding(.horizontal)
-    }
-    
     private var userInfoSection: some View {
         DisclosureGroup(
             isExpanded: $isUserInfoExpanded,

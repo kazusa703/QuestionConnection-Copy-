@@ -8,54 +8,56 @@ struct GradingDetailView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
     @Environment(\.dismiss) private var dismiss
     
+    // 記述式の採点状態（true: 正解, false: 不正解）
     @State private var essayGrades: [String: Bool] = [:]
+    
     @State private var showGradingNotification = false
     @State private var navigateToDM = false
     @State private var createdThread: DMThread?
-    
-    // ★★★ State変数に追加 ★★★
     @State private var showInitialDMView = false
     
+    // 記述式のみ抽出
     private var essayDetails: [AnswerDetail] {
         log.details.filter { $0.type == "essay" }
     }
     
+    // 自動採点（選択・穴埋め）のみ抽出
     private var autoGradedDetails: [AnswerDetail] {
         log.details.filter { $0.type != "essay" }
     }
     
+    // 全ての記述式が採点済みか判定
     private var allEssaysGraded: Bool {
         essayDetails.allSatisfy { essayGrades[$0.itemId] != nil }
     }
     
-    private var allEssaysApproved: Bool {
-        essayDetails.allSatisfy { essayGrades[$0.itemId] == true }
-    }
-    
-    private var allAutoGradedCorrect: Bool {
-        autoGradedDetails.allSatisfy { $0.isCorrect }
-    }
-    
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 24) {
+                
+                // 1. ヘッダー（回答者情報）
                 headerSection
                 
+                // 2. 自動採点エリア（選択式・穴埋め）
+                // ここで「不正解」があっても、下の記述式で挽回可能です
                 if !autoGradedDetails.isEmpty {
                     autoGradedSection
                 }
                 
+                // 3. 記述式採点エリア
+                // ここでの評価が最終合否を決めます
                 if !essayDetails.isEmpty {
                     essayGradingSection
                 }
                 
-                summarySection
-                submitButton
+                // 4. 採点実行ボタン
+                submitButtonSection
             }
             .padding()
         }
         .navigationTitle("回答詳細")
         .navigationBarTitleDisplayMode(.inline)
+        // 完了後の通知・遷移
         .sheet(isPresented: $showGradingNotification) {
             GradingNotificationView(
                 isPresented: $showGradingNotification,
@@ -69,7 +71,6 @@ struct GradingDetailView: View {
                 }
             )
         }
-        // ★★★ body内のsheet修正（showGradingNotificationの後に追加）★★★
         .sheet(isPresented: $showInitialDMView) {
             NavigationStack {
                 InitialDMView(
@@ -92,41 +93,46 @@ struct GradingDetailView: View {
         }
     }
     
-    // MARK: - View Components
+    // MARK: - UI Components
     
     private var headerSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: "person.circle.fill")
-                    .font(.system(size: 40))
-                    .foregroundColor(.blue)
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    if let nickname = log.userNickname, !nickname.isEmpty {
-                        Text(nickname)
-                            .font(.title2)
-                            .fontWeight(.bold)
-                    } else {
-                        Text("ID: \(log.userId.prefix(8))...")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                    }
-                    
-                    Text(statusText(log.status))
-                        .font(.subheadline)
-                        .foregroundColor(statusColor(log.status))
+        HStack(spacing: 12) {
+            Image(systemName: "person.circle.fill")
+                .resizable()
+                .frame(width: 50, height: 50)
+                .foregroundColor(.blue)
+                .background(Circle().fill(Color.white))
+                .overlay(Circle().stroke(Color.gray.opacity(0.2), lineWidth: 1))
+            
+            VStack(alignment: .leading, spacing: 4) {
+                if let nickname = log.userNickname, !nickname.isEmpty {
+                    Text(nickname)
+                        .font(.title3)
+                        .fontWeight(.bold)
+                } else {
+                    Text("ID: \(log.userId.prefix(8))...")
+                        .font(.headline)
+                        .foregroundColor(.secondary)
                 }
                 
-                Spacer()
+                Text(statusText(log.status))
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(statusColor(log.status).opacity(0.1))
+                    .foregroundColor(statusColor(log.status))
+                    .cornerRadius(4)
             }
-            
-            Divider()
+            Spacer()
         }
+        .padding()
+        .background(Color(UIColor.secondarySystemBackground))
+        .cornerRadius(12)
     }
     
     private var autoGradedSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("自動採点結果")
+            Text("自動採点の結果")
                 .font(.headline)
                 .foregroundColor(.secondary)
             
@@ -134,22 +140,36 @@ struct GradingDetailView: View {
                 HStack {
                     Image(systemName: detail.isCorrect ? "checkmark.circle.fill" : "xmark.circle.fill")
                         .foregroundColor(detail.isCorrect ? .green : .red)
+                        .font(.title3)
                     
-                    Text(detail.type == "choice" ? "選択式" : "穴埋め")
-                        .font(.subheadline)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(detail.type == "choice" ? "選択式" : "穴埋め")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Text(detail.userAnswer?.displayString ?? "(回答なし)")
+                            .font(.body)
+                            .fontWeight(.medium)
+                    }
                     
                     Spacer()
                     
                     Text(detail.isCorrect ? "正解" : "不正解")
                         .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundColor(detail.isCorrect ? .green : .red)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(detail.isCorrect ? Color.green.opacity(0.1) : Color.red.opacity(0.1))
                         .cornerRadius(4)
                 }
-                .padding(12)
-                .background(Color.gray.opacity(0.05))
-                .cornerRadius(8)
+                .padding()
+                .background(Color.white)
+                .cornerRadius(10)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                )
             }
         }
     }
@@ -157,169 +177,121 @@ struct GradingDetailView: View {
     private var essayGradingSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("記述式問題の採点")
+                Text("記述式の採点")
                     .font(.headline)
-                
+                    .foregroundColor(.primary)
                 Spacer()
-                
-                Text("\(essayGrades.count)/\(essayDetails.count) 採点済み")
+                Text("残り \(essayDetails.count - essayGrades.count) 問")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
             
             ForEach(Array(essayDetails.enumerated()), id: \.element.itemId) { index, detail in
-                essayCard(detail: detail, index: index + 1)
-            }
-            
-            HStack {
-                Image(systemName: "info.circle.fill")
-                    .foregroundColor(.orange)
-                Text("全ての記述式問題が正解の場合のみ、回答者に通知が送られます")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            .padding(12)
-            .background(Color.orange.opacity(0.1))
-            .cornerRadius(8)
-        }
-    }
-    
-    private func essayCard(detail: AnswerDetail, index: Int) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("📝 記述式問題 \(index)")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                
-                Spacer()
-                
-                if let isApproved = essayGrades[detail.itemId] {
-                    Text(isApproved ? "✅ 正解" : "❌ 不正解")
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .foregroundColor(isApproved ? .green : .red)
-                }
-            }
-            
-            VStack(alignment: .leading, spacing: 8) {
-                Text("回答:")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                
-                Text(detail.userAnswer?.displayString ?? "(回答なし)")
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.blue.opacity(0.05))
-                    .cornerRadius(8)
-            }
-            
-            HStack(spacing: 16) {
-                Button(action: {
-                    withAnimation {
-                        essayGrades[detail.itemId] = true
-                    }
-                }) {
+                VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Image(systemName: essayGrades[detail.itemId] == true ? "checkmark.circle.fill" : "circle")
-                        Text("正解")
+                        Text("Q\(index + 1) (記述式)")
+                            .font(.subheadline)
+                            .fontWeight(.bold)
+                            .foregroundColor(.secondary)
+                        Spacer()
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(12)
-                    .background(essayGrades[detail.itemId] == true ? Color.green : Color.green.opacity(0.1))
-                    .foregroundColor(essayGrades[detail.itemId] == true ? .white : .green)
-                    .cornerRadius(8)
-                }
-                
-                Button(action: {
-                    withAnimation {
-                        essayGrades[detail.itemId] = false
-                    }
-                }) {
-                    HStack {
-                        Image(systemName: essayGrades[detail.itemId] == false ? "xmark.circle.fill" : "circle")
-                        Text("不正解")
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(12)
-                    .background(essayGrades[detail.itemId] == false ? Color.red : Color.red.opacity(0.1))
-                    .foregroundColor(essayGrades[detail.itemId] == false ? .white : .red)
-                    .cornerRadius(8)
-                }
-            }
-        }
-        .padding(16)
-        .background(Color.white)
-        .cornerRadius(12)
-        .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: 2)
-    }
-    
-    private var summarySection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Divider()
-            
-            HStack {
-                Text("採点サマリー")
-                    .font(.headline)
-                Spacer()
-            }
-            
-            HStack {
-                VStack(alignment: .leading) {
-                    Text("選択式/穴埋め")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text("\(autoGradedDetails.filter { $0.isCorrect }.count)/\(autoGradedDetails.count) 正解")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                }
-                
-                Spacer()
-                
-                VStack(alignment: .trailing) {
-                    Text("記述式")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                     
-                    if allEssaysGraded {
-                        let approvedCount = essayGrades.values.filter { $0 }.count
-                        Text("\(approvedCount)/\(essayDetails.count) 正解")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                    } else {
-                        Text("採点中...")
-                            .font(.subheadline)
-                            .foregroundColor(.orange)
+                    Text(detail.userAnswer?.displayString ?? "(回答なし)")
+                        .font(.body)
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.blue.opacity(0.05))
+                        .cornerRadius(8)
+                    
+                    Divider()
+                    
+                    HStack(spacing: 12) {
+                        // 不正解ボタン
+                        Button(action: {
+                            withAnimation { essayGrades[detail.itemId] = false }
+                        }) {
+                            HStack {
+                                Image(systemName: essayGrades[detail.itemId] == false ? "xmark.circle.fill" : "circle")
+                                Text("不正解")
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(essayGrades[detail.itemId] == false ? Color.red.opacity(0.1) : Color.clear)
+                            .foregroundColor(essayGrades[detail.itemId] == false ? .red : .gray)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(essayGrades[detail.itemId] == false ? Color.red : Color.gray.opacity(0.3), lineWidth: 1)
+                            )
+                            .cornerRadius(8)
+                        }
+                        
+                        // 正解ボタン
+                        Button(action: {
+                            withAnimation { essayGrades[detail.itemId] = true }
+                        }) {
+                            HStack {
+                                Image(systemName: essayGrades[detail.itemId] == true ? "checkmark.circle.fill" : "circle")
+                                Text("正解 (承認)")
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(essayGrades[detail.itemId] == true ? Color.green.opacity(0.1) : Color.clear)
+                            .foregroundColor(essayGrades[detail.itemId] == true ? .green : .gray)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(essayGrades[detail.itemId] == true ? Color.green : Color.gray.opacity(0.3), lineWidth: 1)
+                            )
+                            .cornerRadius(8)
+                        }
                     }
                 }
+                .padding()
+                .background(Color.white)
+                .cornerRadius(12)
+                .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
             }
-            .padding(12)
-            .background(Color.gray.opacity(0.05))
-            .cornerRadius(8)
         }
     }
     
-    private var submitButton: some View {
+    private var submitButtonSection: some View {
         VStack(spacing: 12) {
             Button(action: submitGrading) {
                 HStack {
                     if profileViewModel.isJudging {
-                        ProgressView()
-                            .tint(.white)
+                        ProgressView().tint(.white)
                     } else {
                         Image(systemName: "checkmark.seal.fill")
-                        Text("採点完了")
+                        Text("採点を確定する")
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .padding(16)
+                .padding()
                 .background(allEssaysGraded ? Color.blue : Color.gray)
                 .foregroundColor(.white)
                 .cornerRadius(12)
             }
             .disabled(!allEssaysGraded || profileViewModel.isJudging)
             
-            if !allEssaysGraded {
-                Text("全ての記述式問題を採点してください")
+            // 注釈（作成者の判断基準を補足）
+            if allEssaysGraded {
+                let approved = essayGrades.values.allSatisfy { $0 }
+                if approved {
+                    VStack(spacing: 4) {
+                        Text("※ 「正解」として回答者に通知され、DMが可能になります。")
+                            .font(.caption)
+                            .foregroundColor(.green)
+                            .fontWeight(.bold)
+                        Text("（自動採点の結果に関わらず合格となります）")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                } else {
+                    Text("※ 「不正解」として通知されます。DMはできません。")
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
+            } else {
+                Text("すべての記述式問題を判定してください")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -327,7 +299,7 @@ struct GradingDetailView: View {
         .padding(.top, 20)
     }
     
-    // MARK: - Helper Functions
+    // MARK: - Logic
     
     private func initializeEssayGrades() {
         for detail in essayDetails {
@@ -339,26 +311,25 @@ struct GradingDetailView: View {
         }
     }
     
-    // GradingDetailView.swift の submitGrading 関数を以下に置き換え
-
     private func submitGrading() {
         Task {
+            // サーバーへ送信 (記述式の結果に基づいて合否が決まる)
             let success = await profileViewModel.submitEssayGrades(
                 logId: log.logId,
                 essayGrades: essayGrades
             )
             
             if success {
-                let allAutoCorrect = autoGradedDetails.allSatisfy { $0.isCorrect }
+                // ★★★ 修正: 記述式が全て正解なら、自動採点の結果に関わらず「合格」とする ★★★
                 let allEssayCorrect = essayGrades.values.allSatisfy { $0 == true }
                 
-                if allAutoCorrect && allEssayCorrect {
+                if allEssayCorrect {
                     showGradingNotification = true
                 } else {
                     dismiss()
                 }
             } else {
-                print("採点の送信に失敗しました")
+                print("採点送信失敗")
             }
         }
     }
@@ -380,17 +351,16 @@ struct GradingDetailView: View {
     
     private func statusText(_ status: String) -> String {
         switch status {
-        case "pending_review": return "⚠️ 採点待ち"
-        case "approved": return "✅ 承認済み"
-        case "rejected": return "❌ 不正解"
-        case "completed": return "✅ 自動採点完了"
-        default: return status
+        case "pending_review": return "未採点"
+        case "approved": return "承認済み"
+        case "rejected": return "不正解"
+        default: return ""
         }
     }
     
     private func statusColor(_ status: String) -> Color {
         switch status {
-        case "pending_review": return . orange
+        case "pending_review": return .orange
         case "approved": return .green
         case "rejected": return .red
         default: return .gray

@@ -6,68 +6,70 @@ struct MyQuestionsDetailView: View {
     @ObservedObject var viewModel: ProfileViewModel
     @EnvironmentObject private var authViewModel: AuthViewModel
     
+    // ★ 追加: タブ選択状態
+    @State private var selectedTab = "essay" // "essay" (記述式あり), "choice" (選択/穴埋めのみ)
+    
     var body: some View {
-        List {
-            if isLoadingMyQuestions {
-                ProgressView()
-                    .frame(maxWidth: .infinity)
-                    .padding()
-            } else if questions.isEmpty {
-                Text("作成した問題がありません")
-                    .foregroundColor(.secondary)
-            } else {
-                ForEach(questions, id: \.questionId) { question in
-                    NavigationLink(destination: AnswerManagementView(question: question).environmentObject(viewModel)) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(question.title)
-                                    .font(.headline)
-                                
-                                // タグ表示
-                                if !question.tags.isEmpty {
-                                    HStack(spacing: 4) {
-                                        ForEach(question.tags, id: \.self) { tag in
-                                            Text(tag)
-                                                .font(.caption)
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                                .background(Color.blue.opacity(0.1))
-                                                .cornerRadius(4)
-                                        }
-                                    }
+        VStack(spacing: 0) {
+            // ★ 追加: 切り替えタブ (Picker)
+            Picker("Filter", selection: $selectedTab) {
+                Text("記述式を含む").tag("essay")
+                Text("選択・穴埋め").tag("choice")
+            }
+            .pickerStyle(.segmented)
+            .padding()
+            .background(Color(UIColor.systemBackground))
+            
+            // リスト表示
+            List {
+                if isLoadingMyQuestions {
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                        Spacer()
+                    }
+                    .listRowSeparator(.hidden)
+                } else {
+                    // タブに合わせてフィルタリング
+                    let filteredQuestions = questions.filter { question in
+                        if selectedTab == "essay" {
+                            return question.hasEssayQuestion
+                        } else {
+                            return !question.hasEssayQuestion
+                        }
+                    }
+                    
+                    if filteredQuestions.isEmpty {
+                        Text("該当する問題はありません")
+                            .foregroundColor(.secondary)
+                            .listRowSeparator(.hidden)
+                            .padding(.top, 20)
+                    } else {
+                        ForEach(filteredQuestions, id: \.questionId) { question in
+                            // ★ タブによって遷移先を分岐
+                            if selectedTab == "essay" {
+                                // A. 記述式を含む -> 採点・管理画面 (AnswerManagementView) へ
+                                NavigationLink(destination: AnswerManagementView(question: question).environmentObject(viewModel)) {
+                                    QuestionRowView(question: question)
                                 }
-                            }
-                            
-                            Spacer()
-                            
-                            VStack(alignment: .trailing, spacing: 4) {
-                                // ★★★ 修正：回答数と未採点数を同時表示 ★★★
-                                HStack(spacing: 8) {
-                                    // 緑：回答数
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "checkmark.circle")
-                                            .foregroundColor(.green)
-                                        Text("\(question.answerCount ?? 0)")
-                                            .font(.subheadline)
-                                    }
-                                    
-                                    // ★ 赤：未採点数（記述式がある場合のみ表示）
-                                    if question.hasEssayQuestion, let pendingCount = question.pendingCount, pendingCount > 0 {
-                                        Text("未採点: \(pendingCount)")
-                                            .font(.caption)
-                                            .foregroundColor(.red)
-                                            .fontWeight(.bold)
-                                    }
+                            } else {
+                                // B. 選択・穴埋めのみ -> 分析・詳細画面 (QuestionAnalyticsView) へ
+                                NavigationLink(destination: QuestionAnalyticsView(question: question)
+                                    .environmentObject(viewModel)
+                                    .environmentObject(authViewModel)
+                                ) {
+                                    QuestionRowView(question: question)
                                 }
                             }
                         }
-                        .padding(.vertical, 8)
                     }
                 }
             }
+            .listStyle(.plain) // スタイルを維持
         }
         .navigationTitle("作成した問題")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.visible, for: .navigationBar)
     }
 }
 
@@ -77,7 +79,10 @@ struct MyQuestionsDetailView: View {
     
     return NavigationStack {
         MyQuestionsDetailView(
-            questions: [],
+            questions: [
+                Question(questionId: "1", title: "記述式ありの質問", purpose: "test", tags: [], remarks: "", authorId: "me", quizItems: [QuizItem(id: "q1", type: .essay, questionText: "")], createdAt: "", dmInviteMessage: nil, shareCode: nil, answerCount: 5, pendingCount: 2),
+                Question(questionId: "2", title: "選択式の質問", purpose: "test", tags: [], remarks: "", authorId: "me", quizItems: [QuizItem(id: "q2", type: .choice, questionText: "")], createdAt: "", dmInviteMessage: nil, shareCode: nil, answerCount: 10, pendingCount: 0)
+            ],
             isLoadingMyQuestions: false,
             viewModel: profileVM
         )

@@ -6,6 +6,9 @@ struct QuizView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
     @EnvironmentObject private var profileViewModel: ProfileViewModel
     @EnvironmentObject private var subscriptionManager: SubscriptionManager
+    
+    @EnvironmentObject private var navManager: NavigationManager
+    @Environment(\.showAuthenticationSheet) private var showAuthenticationSheet
     @Environment(\.dismiss) var dismiss
     
     @State private var currentQuizIndex = 0
@@ -14,8 +17,13 @@ struct QuizView: View {
     @State private var showEssayConfirm = false
     @State private var hasEssayQuestion = false
     @State private var isInCorrect = false
+    @State private var isPendingSubmission = false
     
     private let adManager = InterstitialAdManager()
+    
+    private var hasEssay: Bool {
+        question.quizItems.contains { $0.type == .essay }
+    }
     
     var body: some View {
         ZStack {
@@ -82,6 +90,16 @@ struct QuizView: View {
                 adManager.loadAd()
             }
         }
+        .onChange(of: authViewModel.isSignedIn) { _, isSignedIn in
+            if isSignedIn && isPendingSubmission {
+                isPendingSubmission = false
+                if currentQuizIndex < question.quizItems.count {
+                    handleAnswerTap()
+                } else {
+                    submitAllAnswers()
+                }
+            }
+        }
         .sheet(isPresented: $showEssayConfirm) {
             EssayConfirmView(
                 isPresented: $showEssayConfirm,
@@ -93,13 +111,16 @@ struct QuizView: View {
             if isInCorrect {
                 QuizIncorrectView(
                     currentItem: question.quizItems[currentQuizIndex],
-                    userAnswer: userAnswers[question.quizItems[currentQuizIndex].id] ?? [:]
+                    userAnswer: userAnswers[question.quizItems[currentQuizIndex].id] ?? [:],
+                    hasEssay: hasEssay
                 )
             } else {
                 QuizCompleteViewWrapper(
                     question: question,
-                    hasEssay: question.quizItems.contains { $0.type == .essay },
+                    hasEssay: hasEssay,
                     dismissAction: {
+                        navManager.popToRoot(tab: 0)
+                        navManager.tabSelection = 0
                         dismiss()
                     }
                 )
@@ -112,9 +133,7 @@ struct QuizView: View {
     private func handleAnswerTap() {
         let currentItem = question.quizItems[currentQuizIndex]
         let userAnswer = userAnswers[currentItem.id] ?? [:]
-        
         let isCorrect = checkAnswer(item: currentItem, userAnswer: userAnswer)
-        
         if isCorrect {
             if currentQuizIndex + 1 < question.quizItems.count {
                 let nextItem = question.quizItems[currentQuizIndex + 1]
@@ -123,12 +142,33 @@ struct QuizView: View {
                     showEssayConfirm = true
                     return
                 }
+                proceedToNextQuestion()
+            } else {
+                if !authViewModel.isSignedIn {
+                    isPendingSubmission = true
+                    showAuthenticationSheet.wrappedValue = true
+                    return
+                }
+                submitAllAnswers()
             }
-            
-            proceedToNextQuestion()
         } else {
             isInCorrect = true
-            showResult = true
+            if hasEssay {
+                if !authViewModel.isSignedIn {
+                    isPendingSubmission = true
+                    showAuthenticationSheet.wrappedValue = true
+                    return
+                }
+                Task {
+                    _ = await viewModel.submitAllAnswers(
+                        questionId: question.questionId,
+                        answers: userAnswers
+                    )
+                    await MainActor.run { showResult = true }
+                }
+            } else {
+                showResult = true
+            }
         }
     }
     
@@ -136,24 +176,29 @@ struct QuizView: View {
         if currentQuizIndex + 1 < question.quizItems.count {
             currentQuizIndex += 1
         } else {
+            if !authViewModel.isSignedIn {
+                isPendingSubmission = true
+                showAuthenticationSheet.wrappedValue = true
+                return
+            }
             submitAllAnswers()
         }
     }
     
     private func submitAllAnswers() {
+        if !authViewModel.isSignedIn {
+            isPendingSubmission = true
+            showAuthenticationSheet.wrappedValue = true
+            return
+        }
         Task {
-            let hasEssay = question.quizItems.contains { $0.type == .essay }
-            
             let success = await viewModel.submitAllAnswers(
                 questionId: question.questionId,
-                answers: userAnswers,
-                hasEssay: hasEssay
+                answers: userAnswers
             )
-            
             await MainActor.run {
                 if success {
                     isInCorrect = false
-                    
                     if subscriptionManager.isPremium {
                         showResult = true
                     } else {
@@ -171,7 +216,6 @@ struct QuizView: View {
         case .choice:
             let selectedId = userAnswer["choice"] ?? ""
             return selectedId == item.correctAnswerId
-            
         case .fillIn:
             let correctAnswers = item.fillInAnswers
             if correctAnswers.isEmpty { return false }
@@ -183,7 +227,6 @@ struct QuizView: View {
                 }
             }
             return true
-            
         case .essay:
             return true
         }
@@ -192,7 +235,6 @@ struct QuizView: View {
     private var isAnswerEmpty: Bool {
         let currentItem = question.quizItems[currentQuizIndex]
         let answer = userAnswers[currentItem.id] ?? [:]
-        
         switch currentItem.type {
         case .choice:
             let choiceValue = answer["choice"] ?? ""
@@ -218,7 +260,6 @@ struct QuizView: View {
 struct ChoiceQuestionView: View {
     let item: QuizItem
     @Binding var answer: String
-    
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !item.choices.isEmpty {
@@ -227,11 +268,9 @@ struct ChoiceQuestionView: View {
                         HStack(spacing: 12) {
                             Image(systemName: answer == choice.id ? "checkmark.circle.fill" : "circle")
                                 .foregroundColor(answer == choice.id ? .blue : .gray)
-                            
                             Text(choice.text)
                                 .foregroundColor(.primary)
                                 .multilineTextAlignment(.leading)
-                            
                             Spacer()
                         }
                         .padding(12)
@@ -248,7 +287,6 @@ struct ChoiceQuestionView: View {
 struct FillInQuestionView: View {
     let item: QuizItem
     @Binding var answers: [String: String]
-    
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !item.fillInAnswers.isEmpty {
@@ -257,7 +295,6 @@ struct FillInQuestionView: View {
                         Text("[\(key)]の回答:")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
-                        
                         TextField("回答を入力", text: Binding(
                             get: { answers[key] ?? "" },
                             set: { answers[key] = $0 }
@@ -278,13 +315,11 @@ struct FillInQuestionView: View {
 struct QuizEssayQuestionView: View {
     let item: QuizItem
     @Binding var answer: String
-    
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("あなたの回答:")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
-            
             TextEditor(text: $answer)
                 .frame(height: 200)
                 .padding(8)
@@ -292,7 +327,6 @@ struct QuizEssayQuestionView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(Color.gray.opacity(0.3), lineWidth: 1)
                 )
-            
             Text("※ 入力した内容は出題者に送られます")
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -305,7 +339,6 @@ struct QuizCompleteViewWrapper: View {
     let question: Question
     let hasEssay: Bool
     let dismissAction: () -> Void
-    
     var body: some View {
         QuizCompleteView(
             question: question,

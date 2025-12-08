@@ -1,25 +1,17 @@
 import SwiftUI
 
 struct MainTabView: View {
-    // 認証状態を共有
     @EnvironmentObject var authViewModel: AuthViewModel
-    
-    // ★ 修正: 親から注入されたDMViewModelを使用
     @EnvironmentObject var dmViewModel: DMViewModel
     
-    // タブの選択状態
-    @State private var selection = 0
+    // ★★★ 修正: NavigationManagerを使用 ★★★
+    @EnvironmentObject var navManager: NavigationManager
     
-    // ★★★ 追加: 各タブのNavigationPathを管理 ★★★
-    @State private var questionPath = NavigationPath()
-    @State private var createPath = NavigationPath()
-    @State private var dmPath = NavigationPath()
-    @State private var profilePath = NavigationPath()
-
     var body: some View {
-        TabView(selection: $selection) {
+        // selection と path を navManager にバインディング
+        TabView(selection: $navManager.tabSelection) {
             // 1. 質問一覧タブ
-            NavigationStack(path: $questionPath) {
+            NavigationStack(path: $navManager.questionPath) {
                 BoardView()
             }
             .tabItem {
@@ -29,7 +21,7 @@ struct MainTabView: View {
             .tag(0)
             
             // 2. 検索/作成タブ
-            NavigationStack(path: $createPath) {
+            NavigationStack(path: $navManager.createPath) {
                 CreateQuestionView()
             }
             .tabItem {
@@ -39,7 +31,7 @@ struct MainTabView: View {
             .tag(1)
             
             // 3. DM一覧タブ
-            NavigationStack(path: $dmPath) {
+            NavigationStack(path: $navManager.dmPath) {
                 DMListView()
             }
             .tabItem {
@@ -49,7 +41,7 @@ struct MainTabView: View {
             .tag(2)
             
             // 4. プロフィールタブ
-            NavigationStack(path: $profilePath) {
+            NavigationStack(path: $navManager.profilePath) {
                 ProfileView(
                     userId: authViewModel.userSub ?? "",
                     isMyProfile: true,
@@ -68,9 +60,11 @@ struct MainTabView: View {
 #Preview {
     let authVM = AuthViewModel()
     let dmVM = DMViewModel()
+    let navManager = NavigationManager()
     dmVM.setAuthViewModel(authVM)
     
     return MainTabView()
         .environmentObject(authVM)
         .environmentObject(dmVM)
+        .environmentObject(navManager)
 }

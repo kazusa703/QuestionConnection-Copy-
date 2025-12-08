@@ -3,6 +3,9 @@ import SwiftUI
 struct QuizIncorrectView: View {
     let currentItem: QuizItem
     let userAnswer: [String: String]
+    // ★★★ 追加: 記述式があるかどうかのフラグ ★★★
+    let hasEssay: Bool
+    
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
@@ -48,6 +51,15 @@ struct QuizIncorrectView: View {
             
             Spacer()
             
+            // ★★★ 追加: 記述式がある場合のメッセージ ★★★
+            if hasEssay {
+                Text("※ 入力済みの記述式回答は作成者に送信され、採点されます。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.bottom, 4)
+            }
+            
             Button(action: { dismiss() }) {
                 Text("終了")
                     .frame(maxWidth: .infinity)
@@ -58,9 +70,10 @@ struct QuizIncorrectView: View {
             }
         }
         .padding(20)
-        .presentationDetents([.fraction(0.6)])
+        .presentationDetents([.fraction(0.65)]) // 少し高さを広げました
     }
     
+    // ... (getCorrectAnswerText, getUserAnswerText は変更なし) ...
     private func getCorrectAnswerText() -> String {
         switch currentItem.type {
         case .choice:
@@ -68,13 +81,11 @@ struct QuizIncorrectView: View {
                 return currentItem.choices.first(where: { $0.id == currentItem.correctAnswerId })?.text ?? "N/A"
             }
             return "N/A"
-            
         case .fillIn:
             if !currentItem.fillInAnswers.isEmpty {
                 return currentItem.fillInAnswers.values.joined(separator: ", ")
             }
             return "N/A"
-            
         case .essay:
             return currentItem.modelAnswer ?? "N/A"
         }
@@ -88,11 +99,9 @@ struct QuizIncorrectView: View {
                 return currentItem.choices.first(where: { $0.id == selectedId })?.text ?? "未回答"
             }
             return "未回答"
-            
         case .fillIn:
             let values = userAnswer.values.filter { !$0.isEmpty }
             return values.isEmpty ? "未回答" : values.joined(separator: ", ")
-            
         case .essay:
             return userAnswer["essay"] ?? "未回答"
         }
@@ -102,6 +111,7 @@ struct QuizIncorrectView: View {
 #Preview {
     QuizIncorrectView(
         currentItem: QuizItem(id: "1", type: .choice, questionText: "テスト"),
-        userAnswer: ["choice": "wrong"]
+        userAnswer: ["choice": "wrong"],
+        hasEssay: true
     )
 }
