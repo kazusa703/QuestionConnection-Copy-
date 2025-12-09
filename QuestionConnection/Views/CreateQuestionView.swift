@@ -370,7 +370,7 @@ struct FillInQuestionEditor: View {
     
     var body: some View {
         VStack(alignment: .leading) {
-            Text("文章を作成し、[穴]ボタンでカーソル位置に穴を挿入します。")
+            Text("例　あいう[穴1]お　[穴1]＝え")
                 .font(.caption).foregroundColor(.secondary)
             
             HStack {

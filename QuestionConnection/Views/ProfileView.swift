@@ -10,12 +10,14 @@ struct ProfileView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     @EnvironmentObject var dmViewModel: DMViewModel
     
-    @State private var isUserInfoExpanded = false
+    // ★ 削除: isUserInfoExpanded は不要になったので削除
+    // @State private var isUserInfoExpanded = false
     @State private var isGradedAnswersExpanded = true
     
     @State private var showSettings = false
     @State private var showEditProfile = false
-    @State private var showDeleteAlert = false
+    // ★ 削除: アカウント削除アラートも設定画面側に任せるため削除
+    // @State private var showDeleteAlert = false
     @State private var showReportAlert = false
     @State private var reportReason = ""
     @State private var reportDetail = ""
@@ -31,7 +33,7 @@ struct ProfileView: View {
     // 画像選択用
     @State private var selectedItem: PhotosPickerItem? = nil
     
-    // ★★★ 追加: 画像キャッシュ回避用のID ★★★
+    // 画像キャッシュ回避用のID
     @State private var cacheBuster = UUID().uuidString
 
     init(userId: String, isMyProfile: Bool) {
@@ -92,18 +94,7 @@ struct ProfileView: View {
                 }
                 Button("キャンセル", role: .cancel) { }
             }
-            .alert("アカウント削除", isPresented: $showDeleteAlert) {
-                Button("削除する", role: .destructive) {
-                    Task {
-                        if await viewModel.deleteAccount() {
-                            authViewModel.signOut()
-                        }
-                    }
-                }
-                Button("キャンセル", role: .cancel) { }
-            } message: {
-                Text("本当に削除しますか？この操作は取り消せません。")
-            }
+            // ★ 削除: アカウント削除用のアラート定義を削除（設定画面側にある前提）
     }
     
     private var mainContent: some View {
@@ -122,10 +113,8 @@ struct ProfileView: View {
                 createdQuestionsSection
                 Divider()
                 
-                if isMyProfile {
-                    userInfoSection
-                    deleteAccountButton
-                }
+                // ★ 修正: ここにあった userInfoSection と deleteAccountButton を削除しました
+                // 設定画面（歯車アイコン）の中に機能が集約されているため
             }
             .padding(.bottom, 50)
         }
@@ -153,7 +142,7 @@ struct ProfileView: View {
                         if let data = try? await newItem?.loadTransferable(type: Data.self),
                            let uiImage = UIImage(data: data) {
                             await viewModel.uploadProfileImage(userId: userId, image: uiImage)
-                            // ★★★ 更新後にキャッシュバスターを更新して画像を再読み込みさせる ★★★
+                            // 更新後にキャッシュバスターを更新して画像を再読み込みさせる
                             cacheBuster = UUID().uuidString
                         }
                     }
@@ -183,7 +172,7 @@ struct ProfileView: View {
         }
     }
     
-    // ★★★ 修正: キャッシュ回避ロジックを適用 ★★★
+    // キャッシュ回避ロジックを適用
     private var profileImageContent: some View {
         Group {
             if viewModel.isUploadingProfileImage {
@@ -422,37 +411,7 @@ struct ProfileView: View {
         .padding(.horizontal)
     }
     
-    private var userInfoSection: some View {
-        DisclosureGroup(
-            isExpanded: $isUserInfoExpanded,
-            content: {
-                AccountInfoSection()
-                    .environmentObject(authViewModel)
-                    .environmentObject(viewModel)
-                    .padding(.top)
-            },
-            label: {
-                HStack {
-                    Image(systemName: "person.text.rectangle")
-                        .foregroundColor(.accentColor)
-                    Text("ユーザー情報")
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                    Spacer()
-                }
-                .padding(.vertical, 8)
-            }
-        )
-        .padding(.horizontal)
-    }
-    
-    private var deleteAccountButton: some View {
-        Button(action: { showDeleteAlert = true }) {
-            Text("アカウント削除")
-                .foregroundColor(.red)
-                .padding()
-        }
-    }
+    // ★ 削除: userInfoSection と deleteAccountButton は削除しました
 }
 
 // MARK: - Subviews

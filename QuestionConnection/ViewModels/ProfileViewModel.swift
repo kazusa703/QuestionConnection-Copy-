@@ -826,33 +826,55 @@ class ProfileViewModel: ObservableObject {
             }
         }
     
-    func fetchNicknameAndImage(userId: String) async -> (nickname: String, imageUrl: String?) {
-        if let cached = userNicknames[userId] {
-            return (cached, userProfileImages[userId])
+    func fetchNicknameAndImage(userId: String) async -> (nickname: String, imageUrl:  String?) {
+        // ★★★ 修正: キャッシュがあっても、imageUrlがない場合はサーバーから取得し直す ★★★
+        if let cachedNickname = userNicknames[userId],
+           let cachedImageUrl = userProfileImages[userId] {
+            return (cachedNickname, cachedImageUrl)
         }
+        
         let endpoint = "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/users/\(userId)"
         guard let url = URL(string: endpoint) else {
             return ("不明", nil)
         }
+        
         do {
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
             if let token = await authViewModel.getValidIdToken() {
                 request.setValue(token, forHTTPHeaderField: "Authorization")
             }
-            let (data, _) = try await URLSession.shared.data(for: request)
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            // ★★★ 追加: レスポンスのデバッグログ ★★★
+            if let httpResponse = response as? HTTPURLResponse {
+                print("🔍 [fetchNicknameAndImage] Status: \(httpResponse.statusCode)")
+            }
+            if let responseString = String(data: data, encoding: .utf8) {
+                print("🔍 [fetchNicknameAndImage] Response: \(responseString)")
+            }
+            
             let decoder = JSONDecoder()
             let profile = try decoder.decode(UserProfile.self, from: data)
-            let nickname = profile.nickname ?? "（未設定）"
+            
+            let nickname = profile.nickname ??  "（未設定）"
             let imageUrl = profile.profileImageUrl
+            
+            // ★★★ 修正: MainActor. run を使用して確実に更新 ★★★
             await MainActor.run {
                 self.userNicknames[userId] = nickname
                 if let imageUrl = imageUrl {
                     self.userProfileImages[userId] = imageUrl
+                    print("🔍 [fetchNicknameAndImage] Cached imageUrl:  \(imageUrl)")
+                } else {
+                    print("🔍 [fetchNicknameAndImage] No imageUrl in response")
                 }
             }
+            
             return (nickname, imageUrl)
         } catch {
+            print("🔍 [fetchNicknameAndImage] Error: \(error)")
             await MainActor.run {
                 self.userNicknames[userId] = "不明"
             }
