@@ -10,14 +10,12 @@ struct ProfileView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     @EnvironmentObject var dmViewModel: DMViewModel
     
-    // ★ 削除: isUserInfoExpanded は不要になったので削除
-    // @State private var isUserInfoExpanded = false
-    @State private var isGradedAnswersExpanded = true
+    // ★ 削除: isGradedAnswersExpanded, selectedAnswerTab は新しい画面に移譲したため不要
+    // @State private var isGradedAnswersExpanded = true
+    // @State private var selectedAnswerTab = "all"
     
     @State private var showSettings = false
     @State private var showEditProfile = false
-    // ★ 削除: アカウント削除アラートも設定画面側に任せるため削除
-    // @State private var showDeleteAlert = false
     @State private var showReportAlert = false
     @State private var reportReason = ""
     @State private var reportDetail = ""
@@ -27,7 +25,6 @@ struct ProfileView: View {
     @State private var selectedThread: DMThread? = nil
     @State private var showConversation = false
 
-    @State private var selectedAnswerTab = "all"
     @State private var isCreatedQuestionsExpanded = false
     
     // 画像選択用
@@ -94,7 +91,6 @@ struct ProfileView: View {
                 }
                 Button("キャンセル", role: .cancel) { }
             }
-            // ★ 削除: アカウント削除用のアラート定義を削除（設定画面側にある前提）
     }
     
     private var mainContent: some View {
@@ -112,9 +108,6 @@ struct ProfileView: View {
                 
                 createdQuestionsSection
                 Divider()
-                
-                // ★ 修正: ここにあった userInfoSection と deleteAccountButton を削除しました
-                // 設定画面（歯車アイコン）の中に機能が集約されているため
             }
             .padding(.bottom, 50)
         }
@@ -142,7 +135,6 @@ struct ProfileView: View {
                         if let data = try? await newItem?.loadTransferable(type: Data.self),
                            let uiImage = UIImage(data: data) {
                             await viewModel.uploadProfileImage(userId: userId, image: uiImage)
-                            // 更新後にキャッシュバスターを更新して画像を再読み込みさせる
                             cacheBuster = UUID().uuidString
                         }
                     }
@@ -172,16 +164,13 @@ struct ProfileView: View {
         }
     }
     
-    // キャッシュ回避ロジックを適用
     private var profileImageContent: some View {
         Group {
             if viewModel.isUploadingProfileImage {
                 ProgressView()
                     .frame(width: 100, height: 100)
             } else if let imageUrl = viewModel.userProfileImages[userId],
-                      // URLにランダムな文字列をつけて強制的に再読み込みさせる
                       let url = URL(string: "\(imageUrl)?v=\(cacheBuster)") {
-                
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case .empty:
@@ -257,62 +246,35 @@ struct ProfileView: View {
         }
     }
     
-    // MARK: - Graded Answers Section
+    // MARK: - Graded Answers Section (修正版)
     
     private var gradedAnswersSection: some View {
-        DisclosureGroup(
-            isExpanded: $isGradedAnswersExpanded,
-            content: {
-                VStack {
-                    Picker("Filter", selection: $selectedAnswerTab) {
-                        Text("すべて").tag("all")
-                        Text("採点待ち").tag("pending")
-                        Text("正解").tag("approved")
-                        Text("不正解").tag("rejected")
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.vertical, 8)
-                    
-                    let filtered = filterAnswers(viewModel.myGradedAnswers)
-                    
-                    if filtered.isEmpty {
-                        Text("該当する履歴はありません")
-                            .foregroundColor(.secondary)
-                            .padding()
-                    } else {
-                        LazyVStack(spacing: 12) {
-                            ForEach(filtered) { log in
-                                NavigationLink(destination: AnswerResultView(log: log)) {
-                                    GradedAnswerRow(log: log)
-                                }
-                                .buttonStyle(PlainButtonStyle())
-                            }
-                        }
-                        .padding(.top, 10)
-                    }
+        // ★ 修正: DisclosureGroup をやめて NavigationLink に変更
+        NavigationLink(destination: GradedAnswersDetailView(viewModel: viewModel)) {
+            HStack {
+                Image(systemName: "pencil.and.list.clipboard")
+                    .foregroundColor(.accentColor)
+                
+                Text("記述式問題の結果")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                
+                Spacer()
+                
+                // バッジ（採点待ち数）
+                let pendingCount = viewModel.myGradedAnswers.filter { $0.status == "pending_review" }.count
+                if pendingCount > 0 {
+                    Text("\(pendingCount)")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                        .padding(6)
+                        .background(Color.orange)
+                        .clipShape(Circle())
                 }
-            },
-            label: {
-                HStack {
-                    Image(systemName: "pencil.and.list.clipboard")
-                        .foregroundColor(.accentColor)
-                    Text("記述式問題の結果")
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                    Spacer()
-                    
-                    let pendingCount = viewModel.myGradedAnswers.filter { $0.status == "pending_review" }.count
-                    
-                    if pendingCount > 0 {
-                        Text("\(pendingCount)")
-                            .font(.caption2)
-                            .fontWeight(.bold)
-                            .foregroundColor(.white)
-                            .padding(6)
-                            .background(Color.orange)
-                            .clipShape(Circle())
-                    }
-                    
+                
+                // バッジ（総数）
+                if !viewModel.myGradedAnswers.isEmpty {
                     Text("\(viewModel.myGradedAnswers.count)")
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -320,21 +282,18 @@ struct ProfileView: View {
                         .background(Color.gray.opacity(0.2))
                         .clipShape(Circle())
                 }
-                .padding(.vertical, 8)
+                
+                Image(systemName: "chevron.right")
+                    .foregroundColor(.gray)
             }
-        )
+            .padding()
+            .background(Color(UIColor.secondarySystemBackground))
+            .cornerRadius(10)
+        }
         .padding(.horizontal)
-        .accentColor(.primary)
     }
     
-    private func filterAnswers(_ logs: [AnswerLogItem]) -> [AnswerLogItem] {
-        switch selectedAnswerTab {
-        case "pending": return logs.filter { $0.status == "pending_review" }
-        case "approved": return logs.filter { $0.status == "approved" }
-        case "rejected": return logs.filter { $0.status == "rejected" }
-        default: return logs
-        }
-    }
+    // ★ 削除: filterAnswers メソッドも新しいViewに移動したので不要
     
     // MARK: - Created Questions Section
     
@@ -406,15 +365,64 @@ struct ProfileView: View {
                         .padding(.vertical, 8)
                     }
                 )
+                .padding(.horizontal) // ここだけ調整
             }
         }
         .padding(.horizontal)
     }
-    
-    // ★ 削除: userInfoSection と deleteAccountButton は削除しました
 }
 
-// MARK: - Subviews
+// MARK: - New Subview for Graded Answers (新規作成)
+
+struct GradedAnswersDetailView: View {
+    @ObservedObject var viewModel: ProfileViewModel
+    @State private var selectedAnswerTab = "all"
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("Filter", selection: $selectedAnswerTab) {
+                Text("すべて").tag("all")
+                Text("採点待ち").tag("pending")
+                Text("正解").tag("approved")
+                Text("不正解").tag("rejected")
+            }
+            .pickerStyle(.segmented)
+            .padding()
+            .background(Color(UIColor.systemBackground))
+            
+            List {
+                let filtered = filterAnswers(viewModel.myGradedAnswers)
+                
+                if filtered.isEmpty {
+                    Text("該当する履歴はありません")
+                        .foregroundColor(.secondary)
+                        .listRowSeparator(.hidden)
+                        .padding(.top, 20)
+                } else {
+                    ForEach(filtered) { log in
+                        NavigationLink(destination: AnswerResultView(log: log)) {
+                            GradedAnswerRow(log: log)
+                        }
+                    }
+                }
+            }
+            .listStyle(.plain)
+        }
+        .navigationTitle("記述式問題の結果")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+    
+    private func filterAnswers(_ logs: [AnswerLogItem]) -> [AnswerLogItem] {
+        switch selectedAnswerTab {
+        case "pending": return logs.filter { $0.status == "pending_review" }
+        case "approved": return logs.filter { $0.status == "approved" }
+        case "rejected": return logs.filter { $0.status == "rejected" }
+        default: return logs
+        }
+    }
+}
+
+// MARK: - Existing Subviews
 
 struct GradedAnswerRow: View {
     let log: AnswerLogItem
@@ -460,15 +468,8 @@ struct GradedAnswerRow: View {
                 .padding(.vertical, 4)
                 .background(statusColor)
                 .cornerRadius(4)
-            
-            Image(systemName: "chevron.right")
-                .font(.caption)
-                .foregroundColor(.gray)
         }
-        .padding()
-        .background(Color.white)
-        .cornerRadius(10)
-        .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 2)
+        .padding(.vertical, 4)
     }
 }
 
@@ -505,10 +506,8 @@ struct QuestionRowView: View {
                     }
                 }
             }
-            Image(systemName: "chevron.right")
-                .foregroundColor(.gray)
         }
-        .padding()
+        .padding(.vertical, 4)
     }
 }
 
