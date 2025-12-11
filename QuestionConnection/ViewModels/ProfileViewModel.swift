@@ -109,7 +109,7 @@ struct AnswerLogItem: Codable, Identifiable {
 struct AnswerDetail: Codable, Identifiable {
     let itemId: String
     let type: String // choice, fillIn, essay
-    let questionText: String? 
+    let questionText: String?
     let userAnswer: UserAnswerValue?
     let isCorrect: Bool
     let status: String
@@ -213,6 +213,46 @@ class ProfileViewModel: ObservableObject {
     @Published var selectedQuestionForModelAnswer: Question?
     @Published var isFetchingQuestionDetail = false
     
+    // MARK: - ★★★ Mirror Profile (カスタム表示名) ★★★
+    
+    // [UserId: CustomName] の形式で保存
+    @Published var customNicknames: [String: String] = [:]
+    private let customNicknamesKey = "my_custom_nicknames"
+    
+    // 初期化時に読み込むためのメソッド
+    func loadCustomNicknames() {
+        if let saved = UserDefaults.standard.dictionary(forKey: customNicknamesKey) as? [String: String] {
+            self.customNicknames = saved
+        }
+    }
+    
+    // あだ名を保存する
+    func setCustomNickname(for userId: String, name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            // 空文字なら削除（元の名前に戻す）
+            customNicknames.removeValue(forKey: userId)
+        } else {
+            customNicknames[userId] = trimmed
+        }
+        // UserDefaultsに保存
+        UserDefaults.standard.set(customNicknames, forKey: customNicknamesKey)
+    }
+    
+    // 表示名を取得する（あだ名があればそれを、なければ元のニックネームを返す）
+    func getDisplayName(userId: String) -> String {
+        // 1. 自分でつけたあだ名があるか？
+        if let custom = customNicknames[userId], !custom.isEmpty {
+            return custom
+        }
+        // 2. なければサーバー上のニックネーム
+        if let original = userNicknames[userId], !original.isEmpty {
+            return original
+        }
+        // 3. どちらもなければ
+        return "読み込み中..."
+    }
+    
     // MARK: - Private Properties
     
     private var inFlightNicknameTasks: [String: Task<String, Never>] = [:]
@@ -229,6 +269,12 @@ class ProfileViewModel: ObservableObject {
     
     init(authViewModel: AuthViewModel) {
         self.authViewModel = authViewModel
+        
+        // ★★★ あだ名の読み込みを追加 ★★★
+        if let saved = UserDefaults.standard.dictionary(forKey: "my_custom_nicknames") as? [String: String] {
+            self.customNicknames = saved
+        }
+        
         Task {
             if authViewModel.isSignedIn {
                 await fetchBookmarks()
@@ -651,123 +697,121 @@ class ProfileViewModel: ObservableObject {
     }
     
     // MARK: - Profile Image & Cache
-    
-    // MARK: - Profile Image & Cache
         
-        func uploadProfileImage(userId: String, image: UIImage) async {
-            print("📸 [uploadProfileImage] 開始: userId=\(userId)")
-            
-            guard let idToken = await authViewModel.getValidIdToken() else {
-                await MainActor.run {
-                    self.profileImageAlertMessage = "認証に失敗しました。"
-                    self.showProfileImageAlert = true
-                }
-                return
+    func uploadProfileImage(userId: String, image: UIImage) async {
+        print("📸 [uploadProfileImage] 開始: userId=\(userId)")
+        
+        guard let idToken = await authViewModel.getValidIdToken() else {
+            await MainActor.run {
+                self.profileImageAlertMessage = "認証に失敗しました。"
+                self.showProfileImageAlert = true
             }
-            
-            await MainActor.run { self.isUploadingProfileImage = true }
-            defer { Task { @MainActor in self.isUploadingProfileImage = false } }
-            
-            // 1. 画像のリサイズとデータ化
-            guard let resizedImage = image.resized(toWidth: 500),
-                  let imageData = resizedImage.jpegData(compressionQuality: 0.8) else {
-                await MainActor.run {
-                    self.profileImageAlertMessage = "画像の処理に失敗しました。"
-                    self.showProfileImageAlert = true
-                }
-                return
+            return
+        }
+        
+        await MainActor.run { self.isUploadingProfileImage = true }
+        defer { Task { @MainActor in self.isUploadingProfileImage = false } }
+        
+        // 1. 画像のリサイズとデータ化
+        guard let resizedImage = image.resized(toWidth: 500),
+              let imageData = resizedImage.jpegData(compressionQuality: 0.8) else {
+            await MainActor.run {
+                self.profileImageAlertMessage = "画像の処理に失敗しました。"
+                self.showProfileImageAlert = true
             }
-            print("📸 画像データ作成成功: \(imageData.count) bytes")
+            return
+        }
+        print("📸 画像データ作成成功: \(imageData.count) bytes")
+        
+        let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("profileImage")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
+        
+        // 2. Multipart/form-data の作成
+        let boundary = "Boundary-\(UUID().uuidString)"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        
+        // データを安全に構築
+        let body = createMultipartBody(
+            data: imageData,
+            boundary: boundary,
+            filename: "profile.jpg",
+            mimeType: "image/jpeg"
+        )
+        request.httpBody = body
+        
+        // 3. 送信
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
             
-            let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("profileImage")
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
-            
-            // 2. Multipart/form-data の作成
-            let boundary = "Boundary-\(UUID().uuidString)"
-            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-            
-            // データを安全に構築
-            let body = createMultipartBody(
-                data: imageData,
-                boundary: boundary,
-                filename: "profile.jpg",
-                mimeType: "image/jpeg"
-            )
-            request.httpBody = body
-            
-            // 3. 送信
-            do {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                
-                guard let httpResponse = response as? HTTPURLResponse else { return }
-                print("📸 ステータスコード: \(httpResponse.statusCode)")
+            guard let httpResponse = response as? HTTPURLResponse else { return }
+            print("📸 ステータスコード: \(httpResponse.statusCode)")
 
-                await MainActor.run {
-                    switch httpResponse.statusCode {
-                    case 200...299:
-                        print("✅ アップロード成功")
-                        // レスポンスの解析とUI更新
-                        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                            if let imageUrl = json["profileImageUrl"] as? String {
-                                self.userProfileImages[userId] = imageUrl
-                            }
-                            // 残り回数の更新など
-                            if let changeCount = json["changeCount"] as? Int,
-                               let maxChanges = json["maxChanges"] as? Int {
-                                self.profileImageChangedCount = changeCount
-                                self.remainingProfileImageChanges = maxChanges - changeCount
-                            }
-                            self.profileImageAlertMessage = "プロフィール画像を変更しました"
-                            self.showProfileImageAlert = true
+            await MainActor.run {
+                switch httpResponse.statusCode {
+                case 200...299:
+                    print("✅ アップロード成功")
+                    // レスポンスの解析とUI更新
+                    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        if let imageUrl = json["profileImageUrl"] as? String {
+                            self.userProfileImages[userId] = imageUrl
                         }
-                        
-                    case 403:
-                        // 回数制限など
-                        self.profileImageAlertMessage = "今月の変更回数上限に達しています"
-                        self.showProfileImageAlert = true
-                        
-                    case 413:
-                        self.profileImageAlertMessage = "画像サイズが大きすぎます"
-                        self.showProfileImageAlert = true
-                        
-                    default:
-                        let errorMsg = String(data: data, encoding: .utf8) ?? ""
-                        print("Server Error: \(errorMsg)")
-                        self.profileImageAlertMessage = "アップロードエラー (\(httpResponse.statusCode))"
+                        // 残り回数の更新など
+                        if let changeCount = json["changeCount"] as? Int,
+                           let maxChanges = json["maxChanges"] as? Int {
+                            self.profileImageChangedCount = changeCount
+                            self.remainingProfileImageChanges = maxChanges - changeCount
+                        }
+                        self.profileImageAlertMessage = "プロフィール画像を変更しました"
                         self.showProfileImageAlert = true
                     }
-                }
-            } catch {
-                print("🚨 通信エラー: \(error)")
-                await MainActor.run {
-                    self.profileImageAlertMessage = "通信エラーが発生しました"
+                    
+                case 403:
+                    // 回数制限など
+                    self.profileImageAlertMessage = "今月の変更回数上限に達しています"
+                    self.showProfileImageAlert = true
+                    
+                case 413:
+                    self.profileImageAlertMessage = "画像サイズが大きすぎます"
+                    self.showProfileImageAlert = true
+                    
+                default:
+                    let errorMsg = String(data: data, encoding: .utf8) ?? ""
+                    print("Server Error: \(errorMsg)")
+                    self.profileImageAlertMessage = "アップロードエラー (\(httpResponse.statusCode))"
                     self.showProfileImageAlert = true
                 }
             }
+        } catch {
+            print("🚨 通信エラー: \(error)")
+            await MainActor.run {
+                self.profileImageAlertMessage = "通信エラーが発生しました"
+                self.showProfileImageAlert = true
+            }
         }
+    }
+    
+    // ヘルパー関数: 安全なMultipartデータ作成
+    private func createMultipartBody(data: Data, boundary: String, filename: String, mimeType: String) -> Data {
+        var body = Data()
+        let lineBreak = "\r\n"
         
-        // ヘルパー関数: 安全なMultipartデータ作成
-        private func createMultipartBody(data: Data, boundary: String, filename: String, mimeType: String) -> Data {
-            var body = Data()
-            let lineBreak = "\r\n"
-            
-            // --Boundary
-            body.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
-            // Content-Disposition
-            body.append("Content-Disposition: form-data; name=\"profileImage\"; filename=\"\(filename)\"\(lineBreak)".data(using: .utf8)!)
-            // Content-Type
-            body.append("Content-Type: \(mimeType)\(lineBreak)\(lineBreak)".data(using: .utf8)!)
-            // 画像データ本体
-            body.append(data)
-            // 改行
-            body.append(lineBreak.data(using: .utf8)!)
-            // --Boundary--
-            body.append("--\(boundary)--\(lineBreak)".data(using: .utf8)!)
-            
-            return body
-        }
+        // --Boundary
+        body.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
+        // Content-Disposition
+        body.append("Content-Disposition: form-data; name=\"profileImage\"; filename=\"\(filename)\"\(lineBreak)".data(using: .utf8)!)
+        // Content-Type
+        body.append("Content-Type: \(mimeType)\(lineBreak)\(lineBreak)".data(using: .utf8)!)
+        // 画像データ本体
+        body.append(data)
+        // 改行
+        body.append(lineBreak.data(using: .utf8)!)
+        // --Boundary--
+        body.append("--\(boundary)--\(lineBreak)".data(using: .utf8)!)
+        
+        return body
+    }
     
     func fetchNickname(userId: String) async -> String {
         if let cached = userNicknames[userId] {
@@ -800,33 +844,33 @@ class ProfileViewModel: ObservableObject {
     }
     
     // ★★★ 追加: 課金状態をサーバーに同期 ★★★
-        func syncPremiumStatus(isPremium: Bool) async {
-            guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return }
+    func syncPremiumStatus(isPremium: Bool) async {
+        guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return }
+        
+        let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("settings")
+        do {
+            guard let idToken = await authViewModel.getValidIdToken() else { return }
             
-            let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("settings")
-            do {
-                guard let idToken = await authViewModel.getValidIdToken() else { return }
-                
-                var request = URLRequest(url: url)
-                request.httpMethod = "PUT"
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.setValue(idToken, forHTTPHeaderField: "Authorization")
-                
-                let body = ["isPremium": isPremium]
-                request.httpBody = try JSONEncoder().encode(body)
-                
-                let (_, response) = try await URLSession.shared.data(for: request)
-                if let http = response as? HTTPURLResponse, http.statusCode == 200 {
-                    print("✅ 課金状態を同期しました: \(isPremium)")
-                } else {
-                    print("⚠️ 課金状態の同期に失敗しました")
-                }
-            } catch {
-                print("通信エラー: \(error)")
+            var request = URLRequest(url: url)
+            request.httpMethod = "PUT"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+            
+            let body = ["isPremium": isPremium]
+            request.httpBody = try JSONEncoder().encode(body)
+            
+            let (_, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse, http.statusCode == 200 {
+                print("✅ 課金状態を同期しました: \(isPremium)")
+            } else {
+                print("⚠️ 課金状態の同期に失敗しました")
             }
+        } catch {
+            print("通信エラー: \(error)")
         }
+    }
     
-    func fetchNicknameAndImage(userId: String) async -> (nickname: String, imageUrl:  String?) {
+    func fetchNicknameAndImage(userId: String) async -> (nickname: String, imageUrl: String?) {
         // ★★★ 修正: キャッシュがあっても、imageUrlがない場合はサーバーから取得し直す ★★★
         if let cachedNickname = userNicknames[userId],
            let cachedImageUrl = userProfileImages[userId] {
@@ -858,7 +902,7 @@ class ProfileViewModel: ObservableObject {
             let decoder = JSONDecoder()
             let profile = try decoder.decode(UserProfile.self, from: data)
             
-            let nickname = profile.nickname ??  "（未設定）"
+            let nickname = profile.nickname ?? "（未設定）"
             let imageUrl = profile.profileImageUrl
             
             // ★★★ 修正: MainActor. run を使用して確実に更新 ★★★
@@ -866,7 +910,7 @@ class ProfileViewModel: ObservableObject {
                 self.userNicknames[userId] = nickname
                 if let imageUrl = imageUrl {
                     self.userProfileImages[userId] = imageUrl
-                    print("🔍 [fetchNicknameAndImage] Cached imageUrl:  \(imageUrl)")
+                    print("🔍 [fetchNicknameAndImage] Cached imageUrl: \(imageUrl)")
                 } else {
                     print("🔍 [fetchNicknameAndImage] No imageUrl in response")
                 }

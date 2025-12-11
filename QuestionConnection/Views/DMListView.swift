@@ -23,6 +23,13 @@ struct DMListView: View {
     // 最後のメッセージとその日付をキャッシュ
     @State private var lastMessageCache: [String: (text: String, date: Date)] = [:]
 
+    // ▼▼▼ 追加: 表示名変更用のアラート制御 ▼▼▼
+    @State private var showingEditNameAlert = false
+    @State private var editingThreadId: String? = nil
+    @State private var editingPartnerId: String? = nil
+    @State private var newNicknameInput = ""
+    // ▲▲▲ 追加ここまで ▲▲▲
+
     enum DMTab {
         case all
         case unread
@@ -36,17 +43,17 @@ struct DMListView: View {
             let opponentId = thread.participants.first(where: { $0 != myUserId }) ?? ""
             return !profileViewModel.isBlocked(userId: opponentId)
         }
-        
+      
         let nonDeleted = nonBlocked.filter { thread in
             guard let deletedAt = deletedThreads[thread.threadId] else {
                 return true
             }
-          
+        
             if let threadUpdatedDate = parseDate(thread.lastUpdated),
                threadUpdatedDate > deletedAt {
                 return true
             }
-          
+        
             return false
         }
         
@@ -152,27 +159,23 @@ struct DMListView: View {
         .navigationTitle("DM一覧")
         .searchable(text: $searchText, prompt: "タイトル、ニックネームで検索")
         .onAppear {
-                    if authViewModel.isSignedIn { // ★ 条件を簡素化
-                        dmViewModel.setAuthViewModel(authViewModel)
-                        
-                        // スレッド一覧を取得
-                        // fetchThreads() は内部で fetchAllNicknames を呼ぶように修正したほうが良いですが
-                        // ここでは非同期で呼び出しをかけます
-                        Task {
-                            await dmViewModel.fetchThreads(userId: authViewModel.userSub ?? "")
-                            
-                            // スレッドが取得できたら、そのメンバーのアイコン情報を最新にする
-                            if !dmViewModel.threads.isEmpty {
-                                await fetchAllNicknames(for: dmViewModel.threads)
-                                await fetchLastMessagesForThreads(dmViewModel.threads)
-                            }
-                        }
-                        
-                        isInitialFetchDone = true
-                        loadFavorites()
-                        loadDeletedThreads()
+            if authViewModel.isSignedIn {
+                dmViewModel.setAuthViewModel(authViewModel)
+                
+                Task {
+                    await dmViewModel.fetchThreads(userId: authViewModel.userSub ?? "")
+                    
+                    if !dmViewModel.threads.isEmpty {
+                        await fetchAllNicknames(for: dmViewModel.threads)
+                        await fetchLastMessagesForThreads(dmViewModel.threads)
                     }
                 }
+                
+                isInitialFetchDone = true
+                loadFavorites()
+                loadDeletedThreads()
+            }
+        }
         .refreshable {
             if authViewModel.isSignedIn {
                 profileViewModel.userNicknames = [:]
@@ -234,7 +237,6 @@ struct DMListView: View {
                 Spacer()
             } else {
                 List(filteredThreads) { thread in
-                    // ★★★ 修正: ZStackを使って矢印(>)を消すテクニック ★★★
                     ZStack(alignment: .leading) {
                         // 1. 中身
                         DMListRowView(
@@ -255,10 +257,12 @@ struct DMListView: View {
                         }
                         .opacity(0)
                     }
+                    .contentShape(Rectangle())
                     .contextMenu {
-                        Button {
+                        // 1. お気に入りボタン
+                        Button(action: {
                             toggleFavorite(threadId: thread.threadId)
-                        } label: {
+                        }) {
                             if favoriteThreadIds.contains(thread.threadId) {
                                 Label("お気に入りから削除", systemImage: "star.fill")
                             } else {
@@ -266,17 +270,48 @@ struct DMListView: View {
                             }
                         }
                         
-                        Button(role: .destructive) {
+                        // ▼▼▼ 変更箇所: 表示名を変更ボタン ▼▼▼
+                        if let opponentId = thread.participants.first(where: { $0 != authViewModel.userSub }) {
+                            Button(action: {
+                                // 編集対象のIDをセットしてアラートを表示
+                                editingPartnerId = opponentId
+                                editingThreadId = thread.threadId
+                                // 現在の表示名を初期値に入れる
+                                newNicknameInput = profileViewModel.getDisplayName(userId: opponentId)
+                                showingEditNameAlert = true
+                            }) {
+                                Label("表示名を変更", systemImage: "pencil")
+                            }
+                        }
+                        // ▲▲▲ 変更ここまで ▲▲▲
+                        
+                        // 3. 削除ボタン
+                        Button(role: .destructive, action: {
                             deleteThread(threadId: thread.threadId)
-                        } label: {
+                        }) {
                             Label("この会話を削除", systemImage: "trash")
                         }
                     }
                 }
-                .listStyle(.plain)
-                .task {
-                    await fetchLastMessagesForThreads(filteredThreads)
+                // ▼▼▼ 追加: 入力用アラート ▼▼▼
+                .alert("表示名を変更", isPresented: $showingEditNameAlert) {
+                    TextField("新しい名前を入力", text: $newNicknameInput)
+                    Button("キャンセル", role: .cancel) {
+                        editingPartnerId = nil
+                        newNicknameInput = ""
+                    }
+                    Button("保存") {
+                        if let partnerId = editingPartnerId {
+                            // ProfileViewModelの機能を使って保存
+                            profileViewModel.setCustomNickname(for: partnerId, name: newNicknameInput)
+                        }
+                        editingPartnerId = nil
+                        newNicknameInput = ""
+                    }
+                } message: {
+                    Text("このユーザーの表示名を変更します。\n空白にして保存すると元の名前に戻ります。")
                 }
+                // ▲▲▲ 追加ここまで ▲▲▲
             }
         }
     }
@@ -339,18 +374,18 @@ struct DMListView: View {
             if lastMessageCache[thread.threadId] != nil {
                 continue
             }
-          
+        
             let url = threadsEndpoint
                 .appendingPathComponent(thread.threadId)
                 .appendingPathComponent("messages")
-          
+        
             do {
                 var request = URLRequest(url: url)
                 request.httpMethod = "GET"
                 request.setValue(idToken, forHTTPHeaderField: "Authorization")
 
                 let (data, response) = try await URLSession.shared.data(for: request)
-              
+            
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                     print("fetchLastMessages: サーバーエラー (threadId: \(thread.threadId))")
                     lastMessageCache[thread.threadId] = (text: "エラー", date: Date())
@@ -358,7 +393,7 @@ struct DMListView: View {
                 }
 
                 let messages = try JSONDecoder().decode([Message].self, from: data)
-              
+            
                 if let lastMessage = messages.last {
                     let preview = formatMessagePreview(lastMessage.text)
                     let date = parseDate(lastMessage.timestamp) ?? Date()

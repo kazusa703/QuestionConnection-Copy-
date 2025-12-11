@@ -8,8 +8,7 @@ struct DMListRowView: View {
     let isFavorite: Bool
     let lastMessagePreview: String?
     
-    // ★ 追加: キャッシュ回避用の一意なID
-    // Viewが再生成されるたびに変わるので、常に最新の画像を読みに行きます
+    // 画像キャッシュ回避用のID
     @State private var cacheBuster = UUID().uuidString
     
     private var opponentId: String? {
@@ -17,13 +16,10 @@ struct DMListRowView: View {
         return thread.participants.first(where: { $0 != myUserId })
     }
 
+    // 相手のニックネーム（自分で設定したあだ名があればそれを優先）
     private var opponentNicknameDisplay: String {
         guard let opponentId else { return "不明なユーザー" }
-
-        if let cached = profileViewModel.userNicknames[opponentId] {
-            return cached.isEmpty ? "（未設定）" : cached
-        }
-        return "読み込み中..."
+        return profileViewModel.getDisplayName(userId: opponentId)
     }
     
     private var opponentProfileImageUrl: String? {
@@ -70,7 +66,6 @@ struct DMListRowView: View {
         HStack(alignment: .center, spacing: 12) {
             // --- プロフィール画像表示 ---
             if let imageUrl = opponentProfileImageUrl,
-               // ★ 修正: URLにクエリパラメータをつけてキャッシュを無効化
                let url = URL(string: "\(imageUrl)?v=\(cacheBuster)") {
                 
                 AsyncImage(url: url) { phase in
@@ -80,30 +75,20 @@ struct DMListRowView: View {
                             .resizable()
                             .scaledToFill()
                     case .failure(_):
-                        // 読み込み失敗時はデフォルトアイコン
-                        Image(systemName: "person.crop.circle.fill")
-                            .resizable()
-                            .scaledToFill()
-                            .foregroundColor(.gray)
+                        defaultIcon
                     case .empty:
-                        // 読み込み中
                         ProgressView()
                     @unknown default:
-                        EmptyView()
+                        defaultIcon
                     }
                 }
                 .frame(width: 56, height: 56)
                 .clipShape(Circle())
-                // 背景色をつけて、画像が透過PNGだった場合などに備える
                 .background(Circle().fill(Color.gray.opacity(0.1)))
                 
             } else {
-                // URLがない場合のデフォルト
-                Image(systemName: "person.crop.circle.fill")
-                    .resizable()
-                    .scaledToFill()
+                defaultIcon
                     .frame(width: 56, height: 56)
-                    .foregroundColor(.gray)
             }
             
             VStack(alignment: .leading, spacing: 4) {
@@ -156,6 +141,14 @@ struct DMListRowView: View {
             guard let opponentId else { return }
             _ = await profileViewModel.fetchNicknameAndImage(userId: opponentId)
         }
+    }
+    
+    // デフォルトアイコンを共通化
+    private var defaultIcon: some View {
+        Image(systemName: "person.crop.circle.fill")
+            .resizable()
+            .scaledToFill()
+            .foregroundColor(.gray)
     }
 
     private var nicknameColor: Color {

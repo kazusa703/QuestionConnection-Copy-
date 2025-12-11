@@ -10,10 +10,6 @@ struct ProfileView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     @EnvironmentObject var dmViewModel: DMViewModel
     
-    // ★ 削除: isGradedAnswersExpanded, selectedAnswerTab は新しい画面に移譲したため不要
-    // @State private var isGradedAnswersExpanded = true
-    // @State private var selectedAnswerTab = "all"
-    
     @State private var showSettings = false
     @State private var showEditProfile = false
     @State private var showReportAlert = false
@@ -26,6 +22,10 @@ struct ProfileView: View {
     @State private var showConversation = false
 
     @State private var isCreatedQuestionsExpanded = false
+    
+    // ★ 追加: あだ名編集用のアラート管理
+    @State private var showRenameAlert = false
+    @State private var tempNickname = ""
     
     // 画像選択用
     @State private var selectedItem: PhotosPickerItem? = nil
@@ -91,6 +91,16 @@ struct ProfileView: View {
                 }
                 Button("キャンセル", role: .cancel) { }
             }
+            // ★★★ 追加: あだ名変更アラート ★★★
+            .alert("表示名を変更", isPresented: $showRenameAlert) {
+                TextField("あだ名を入力 (空欄でリセット)", text: $tempNickname)
+                Button("保存") {
+                    viewModel.setCustomNickname(for: userId, name: tempNickname)
+                }
+                Button("キャンセル", role: .cancel) { }
+            } message: {
+                Text("この名前はあなたのアプリ内でのみ表示されます。相手には通知されません。")
+            }
     }
     
     private var mainContent: some View {
@@ -143,9 +153,37 @@ struct ProfileView: View {
                 profileImageContent
             }
             
-            Text(viewModel.userNicknames[userId] ?? "読み込み中...")
-                .font(.title2)
-                .fontWeight(.bold)
+            // ★★★ 修正: 名前表示部分 ★★★
+            HStack(spacing: 8) {
+                // getDisplayNameを使って、あだ名があればそれを表示
+                Text(viewModel.getDisplayName(userId: userId))
+                    .font(.title2)
+                    .fontWeight(.bold)
+                
+                // 自分以外のプロフィールなら、編集ボタンを表示
+                if !isMyProfile {
+                    Button {
+                        // 現在のあだ名（または元の名前）をセットしてアラートを開く
+                        tempNickname = viewModel.customNicknames[userId] ?? ""
+                        showRenameAlert = true
+                    } label: {
+                        Image(systemName: "pencil")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(8)
+                            .background(Color.gray.opacity(0.1))
+                            .clipShape(Circle())
+                    }
+                }
+            }
+            
+            // もしあだ名をつけている場合、元の名前を小さく表示すると親切
+            if !isMyProfile, let original = viewModel.userNicknames[userId],
+               viewModel.customNicknames[userId] != nil {
+                Text("元の名前: \(original)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
             
             if let stats = viewModel.userStats {
                 HStack(spacing: 20) {
@@ -178,24 +216,24 @@ struct ProfileView: View {
                     case .success(let image):
                         image.resizable().scaledToFill()
                     case .failure(_):
-                        Image(systemName: "person.circle.fill")
-                            .resizable()
-                            .foregroundColor(.gray)
+                        defaultIcon
                     @unknown default:
-                        Image(systemName: "person.circle.fill")
-                            .resizable()
-                            .foregroundColor(.gray)
+                        defaultIcon
                     }
                 }
             } else {
-                Image(systemName: "person.circle.fill")
-                    .resizable()
-                    .foregroundColor(.gray)
+                defaultIcon
             }
         }
         .frame(width: 100, height: 100)
         .clipShape(Circle())
         .overlay(Circle().stroke(Color.accentColor, lineWidth: 2))
+    }
+    
+    private var defaultIcon: some View {
+        Image(systemName: "person.circle.fill")
+            .resizable()
+            .foregroundColor(.gray)
     }
     
     private var actionButtons: some View {
@@ -246,10 +284,9 @@ struct ProfileView: View {
         }
     }
     
-    // MARK: - Graded Answers Section (修正版)
+    // MARK: - Graded Answers Section
     
     private var gradedAnswersSection: some View {
-        // ★ 修正: DisclosureGroup をやめて NavigationLink に変更
         NavigationLink(destination: GradedAnswersDetailView(viewModel: viewModel)) {
             HStack {
                 Image(systemName: "pencil.and.list.clipboard")
@@ -292,8 +329,6 @@ struct ProfileView: View {
         }
         .padding(.horizontal)
     }
-    
-    // ★ 削除: filterAnswers メソッドも新しいViewに移動したので不要
     
     // MARK: - Created Questions Section
     
@@ -365,14 +400,14 @@ struct ProfileView: View {
                         .padding(.vertical, 8)
                     }
                 )
-                .padding(.horizontal) // ここだけ調整
+                .padding(.horizontal)
             }
         }
         .padding(.horizontal)
     }
 }
 
-// MARK: - New Subview for Graded Answers (新規作成)
+// MARK: - New Subview for Graded Answers
 
 struct GradedAnswersDetailView: View {
     @ObservedObject var viewModel: ProfileViewModel
