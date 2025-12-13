@@ -6,29 +6,31 @@ struct DMListView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
     @Environment(\.showAuthenticationSheet) private var showAuthenticationSheet
     @EnvironmentObject private var profileViewModel: ProfileViewModel
-    
-    // ★ 追加: 課金管理
+
+    // 課金管理
     @EnvironmentObject private var subscriptionManager: SubscriptionManager
 
     @State private var searchText = ""
     @State private var isInitialFetchDone = false
-    
+
     @State private var selectedTab: DMTab = .all
 
     @State private var favoriteThreadIds: Set<String> = []
-    
+
     // 削除されたスレッド + 削除時刻を記録
     @State private var deletedThreads: [String: Date] = [:]
-    
+
     // 最後のメッセージとその日付をキャッシュ
     @State private var lastMessageCache: [String: (text: String, date: Date)] = [:]
 
-    // ▼▼▼ 追加: 表示名変更用のアラート制御 ▼▼▼
+    // 表示名変更用のアラート制御
     @State private var showingEditNameAlert = false
     @State private var editingThreadId: String? = nil
     @State private var editingPartnerId: String? = nil
     @State private var newNicknameInput = ""
-    // ▲▲▲ 追加ここまで ▲▲▲
+
+    // 未送信リスト表示フラグ
+    @State private var showPendingDMList = false
 
     enum DMTab {
         case all
@@ -43,20 +45,20 @@ struct DMListView: View {
             let opponentId = thread.participants.first(where: { $0 != myUserId }) ?? ""
             return !profileViewModel.isBlocked(userId: opponentId)
         }
-      
+
         let nonDeleted = nonBlocked.filter { thread in
             guard let deletedAt = deletedThreads[thread.threadId] else {
                 return true
             }
-        
+
             if let threadUpdatedDate = parseDate(thread.lastUpdated),
                threadUpdatedDate > deletedAt {
                 return true
             }
-        
+
             return false
         }
-        
+
         guard !searchText.isEmpty else {
             return applyTabFilter(nonDeleted, myUserId: myUserId)
         }
@@ -80,7 +82,7 @@ struct DMListView: View {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let d = f.date(from: isoString) { return d }
-        
+
         let f2 = ISO8601DateFormatter()
         f2.formatOptions = [.withInternetDateTime]
         return f2.date(from: isoString)
@@ -107,13 +109,13 @@ struct DMListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // ★★★ 追加: バナー広告 ★★★
+            // バナー広告
             if !subscriptionManager.isPremium {
                 AdBannerView()
                     .frame(height: 50)
                     .background(Color.gray.opacity(0.1))
             }
-            
+
             if authViewModel.isSignedIn {
                 VStack {
                     HStack {
@@ -157,20 +159,39 @@ struct DMListView: View {
             }
         }
         .navigationTitle("DM一覧")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: {
+                    showPendingDMList = true
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "envelope.badge")
+                        Text("未送信")
+                            .font(.caption)
+                    }
+                    .foregroundColor(.blue)
+                }
+            }
+        }
+        .sheet(isPresented: $showPendingDMList) {
+            PendingDMListView()
+                .environmentObject(authViewModel)
+                .environmentObject(profileViewModel)
+        }
         .searchable(text: $searchText, prompt: "タイトル、ニックネームで検索")
         .onAppear {
             if authViewModel.isSignedIn {
                 dmViewModel.setAuthViewModel(authViewModel)
-                
+
                 Task {
                     await dmViewModel.fetchThreads(userId: authViewModel.userSub ?? "")
-                    
+
                     if !dmViewModel.threads.isEmpty {
                         await fetchAllNicknames(for: dmViewModel.threads)
                         await fetchLastMessagesForThreads(dmViewModel.threads)
                     }
                 }
-                
+
                 isInitialFetchDone = true
                 loadFavorites()
                 loadDeletedThreads()
@@ -246,7 +267,7 @@ struct DMListView: View {
                             lastMessagePreview: lastMessageCache[thread.threadId]?.text
                         )
                         .environmentObject(authViewModel)
-                        
+
                         // 2. 透明なリンク
                         NavigationLink(
                             destination: ConversationView(thread: thread, viewModel: dmViewModel)
@@ -269,22 +290,19 @@ struct DMListView: View {
                                 Label("お気に入りに移動", systemImage: "star")
                             }
                         }
-                        
-                        // ▼▼▼ 変更箇所: 表示名を変更ボタン ▼▼▼
+
+                        // 表示名を変更ボタン
                         if let opponentId = thread.participants.first(where: { $0 != authViewModel.userSub }) {
                             Button(action: {
-                                // 編集対象のIDをセットしてアラートを表示
                                 editingPartnerId = opponentId
                                 editingThreadId = thread.threadId
-                                // 現在の表示名を初期値に入れる
                                 newNicknameInput = profileViewModel.getDisplayName(userId: opponentId)
                                 showingEditNameAlert = true
                             }) {
                                 Label("表示名を変更", systemImage: "pencil")
                             }
                         }
-                        // ▲▲▲ 変更ここまで ▲▲▲
-                        
+
                         // 3. 削除ボタン
                         Button(role: .destructive, action: {
                             deleteThread(threadId: thread.threadId)
@@ -293,7 +311,7 @@ struct DMListView: View {
                         }
                     }
                 }
-                // ▼▼▼ 追加: 入力用アラート ▼▼▼
+                // 入力用アラート
                 .alert("表示名を変更", isPresented: $showingEditNameAlert) {
                     TextField("新しい名前を入力", text: $newNicknameInput)
                     Button("キャンセル", role: .cancel) {
@@ -302,7 +320,6 @@ struct DMListView: View {
                     }
                     Button("保存") {
                         if let partnerId = editingPartnerId {
-                            // ProfileViewModelの機能を使って保存
                             profileViewModel.setCustomNickname(for: partnerId, name: newNicknameInput)
                         }
                         editingPartnerId = nil
@@ -311,7 +328,6 @@ struct DMListView: View {
                 } message: {
                     Text("このユーザーの表示名を変更します。\n空白にして保存すると元の名前に戻ります。")
                 }
-                // ▲▲▲ 追加ここまで ▲▲▲
             }
         }
     }
@@ -361,31 +377,31 @@ struct DMListView: View {
             _ = await profileViewModel.fetchNicknameAndImage(userId: opponentId)
         }
     }
-    
+
     private func fetchLastMessagesForThreads(_ threads: [DMThread]) async {
         guard let idToken = await authViewModel.getValidIdToken() else {
             print("fetchLastMessages: トークン取得失敗")
             return
         }
-        
+
         let threadsEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/threads")!
 
         for thread in threads {
             if lastMessageCache[thread.threadId] != nil {
                 continue
             }
-        
+
             let url = threadsEndpoint
                 .appendingPathComponent(thread.threadId)
                 .appendingPathComponent("messages")
-        
+
             do {
                 var request = URLRequest(url: url)
                 request.httpMethod = "GET"
                 request.setValue(idToken, forHTTPHeaderField: "Authorization")
 
                 let (data, response) = try await URLSession.shared.data(for: request)
-            
+
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                     print("fetchLastMessages: サーバーエラー (threadId: \(thread.threadId))")
                     lastMessageCache[thread.threadId] = (text: "エラー", date: Date())
@@ -393,7 +409,7 @@ struct DMListView: View {
                 }
 
                 let messages = try JSONDecoder().decode([Message].self, from: data)
-            
+
                 if let lastMessage = messages.last {
                     let preview = formatMessagePreview(lastMessage.text)
                     let date = parseDate(lastMessage.timestamp) ?? Date()
@@ -407,7 +423,7 @@ struct DMListView: View {
             }
         }
     }
-    
+
     private func formatMessagePreview(_ text: String) -> String {
         if text.contains("[image]") || text.contains("🖼️") {
             return "🖼️"
@@ -446,7 +462,7 @@ struct DMListView: View {
         let saved = UserDefaults.standard.array(forKey: userFavoritesKey) as? [String] ?? []
         favoriteThreadIds = Set(saved)
     }
-    
+
     private func saveDeletedThreads() {
         guard let userId = authViewModel.userSub else { return }
         let userDeletedKey = "deleted_threads_\(userId)"
@@ -454,7 +470,7 @@ struct DMListView: View {
         UserDefaults.standard.set(encoded, forKey: userDeletedKey)
         print("✅ 削除されたスレッドを保存: \(deletedThreads.count)件")
     }
-    
+
     private func loadDeletedThreads() {
         guard let userId = authViewModel.userSub else { return }
         let userDeletedKey = "deleted_threads_\(userId)"

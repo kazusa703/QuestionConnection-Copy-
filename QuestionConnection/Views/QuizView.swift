@@ -9,28 +9,35 @@ struct QuizView: View {
     @EnvironmentObject private var navManager: NavigationManager
     @Environment(\.showAuthenticationSheet) private var showAuthenticationSheet
     @Environment(\.dismiss) var dismiss
+    
     @State private var currentQuizIndex = 0
     @State private var userAnswers: [String: [String: String]] = [:]
     @State private var showResult = false
     @State private var showEssayConfirm = false
     @State private var isInCorrect = false
     @State private var isPendingSubmission = false
+    
     private let adManager = InterstitialAdManager()
+    
     private var hasEssay: Bool {
         question.quizItems.contains { $0.type == .essay }
     }
+    
     var body: some View {
         ZStack {
             VStack(spacing: 16) {
                 ProgressView(value: Double(currentQuizIndex + 1), total: Double(question.quizItems.count))
                     .padding()
+                
                 if currentQuizIndex < question.quizItems.count {
                     VStack(alignment: .leading, spacing: 12) {
                         let currentItem = question.quizItems[currentQuizIndex]
                         HStack(alignment: .top, spacing: 4) {
                             Text("Q\(currentQuizIndex + 1).")
                                 .font(.headline)
+                            
                             if currentItem.type == .fillIn {
+                                // CreateQuestionViewで定義されたFillInQuestionTextOutlinedを使用
                                 FillInQuestionTextOutlined(text: currentItem.questionText)
                             } else {
                                 Text(currentItem.questionText)
@@ -38,6 +45,7 @@ struct QuizView: View {
                             }
                         }
                         .padding()
+                        
                         if currentItem.type == .choice {
                             ChoiceQuestionView(
                                 item: currentItem,
@@ -68,6 +76,7 @@ struct QuizView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .padding()
                 }
+                
                 Button(action: handleAnswerTap) {
                     Text("回答する")
                         .frame(maxWidth: .infinity)
@@ -80,6 +89,18 @@ struct QuizView: View {
                 .disabled(isAnswerEmpty)
             }
         }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            hideKeyboard()
+        }
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    if value.translation.height > 50 {
+                        hideKeyboard()
+                    }
+                }
+        )
         .navigationBarBackButtonHidden(true)
         .onAppear {
             viewModel.setAuthViewModel(authViewModel)
@@ -111,8 +132,11 @@ struct QuizView: View {
                     userAnswer: userAnswers[question.quizItems[currentQuizIndex].id] ?? [:],
                     onClose: {
                         showResult = false
-                        navManager.popToRoot(tab: 0)
-                        navManager.tabSelection = 0
+                        // ナビゲーションリセット
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            navManager.popToRoot(tab: 0)
+                            navManager.tabSelection = 0
+                        }
                     }
                 )
                 .environmentObject(navManager)
@@ -122,13 +146,17 @@ struct QuizView: View {
                     hasEssay: hasEssay,
                     onClose: {
                         showResult = false
-                        navManager.popToRoot(tab: 0)
-                        navManager.tabSelection = 0
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            navManager.popToRoot(tab: 0)
+                            navManager.tabSelection = 0
+                        }
                     },
                     onDMTap: {
                         showResult = false
-                        navManager.popToRoot(tab: 2)
-                        navManager.tabSelection = 2
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            navManager.popToRoot(tab: 2)
+                            navManager.tabSelection = 2
+                        }
                     }
                 )
                 .environmentObject(authViewModel)
@@ -137,9 +165,16 @@ struct QuizView: View {
             }
         }
     }
+    
+    private func hideKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+    
     private func handleAnswerTap() {
+        hideKeyboard()
         let currentItem = question.quizItems[currentQuizIndex]
         let userAnswer = userAnswers[currentItem.id] ?? [:]
+        
         if currentItem.type == .essay {
             if currentQuizIndex + 1 < question.quizItems.count {
                 proceedToNextQuestion()
@@ -153,6 +188,7 @@ struct QuizView: View {
             }
             return
         }
+        
         let isCorrect = checkAnswer(item: currentItem, userAnswer: userAnswer)
         if isCorrect {
             if currentQuizIndex + 1 < question.quizItems.count {
@@ -170,6 +206,7 @@ struct QuizView: View {
             showResult = true
         }
     }
+    
     private func proceedToNextQuestion() {
         if currentQuizIndex + 1 < question.quizItems.count {
             currentQuizIndex += 1
@@ -182,6 +219,7 @@ struct QuizView: View {
             submitAllAnswers()
         }
     }
+    
     private func submitAllAnswers() {
         if !authViewModel.isSignedIn {
             isPendingSubmission = true
@@ -207,6 +245,7 @@ struct QuizView: View {
             }
         }
     }
+    
     private func checkAnswer(item: QuizItem, userAnswer: [String: String]) -> Bool {
         switch item.type {
         case .choice:
@@ -226,6 +265,7 @@ struct QuizView: View {
             return true
         }
     }
+    
     private var isAnswerEmpty: Bool {
         let currentItem = question.quizItems[currentQuizIndex]
         let answer = userAnswers[currentItem.id] ?? [:]
@@ -254,6 +294,7 @@ struct QuizView: View {
 struct ChoiceQuestionView: View {
     let item: QuizItem
     @Binding var answer: String
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !item.choices.isEmpty {
@@ -281,13 +322,15 @@ struct ChoiceQuestionView: View {
 struct FillInQuestionView: View {
     let item: QuizItem
     @Binding var answers: [String: String]
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !item.fillInAnswers.isEmpty {
                 ForEach(Array(item.fillInAnswers.keys.sorted { sortKeys($0, $1) }), id: \.self) { key in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 4) {
-                            FillInAnswerBox(number: extractNumber(from: key))
+                            // 修正: FillInAnswerBox -> FillInBoxSmall (CreateQuestionViewで定義済みのものを使用)
+                            FillInBoxSmall(number: extractNumber(from: key))
                             Text("の回答:")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
@@ -308,10 +351,12 @@ struct FillInQuestionView: View {
         }
         .padding()
     }
+    
     private func extractNumber(from key: String) -> Int {
         let cleaned = key.replacingOccurrences(of: "穴", with: "")
         return Int(cleaned) ?? 0
     }
+    
     private func sortKeys(_ key1: String, _ key2: String) -> Bool {
         let num1 = extractNumber(from: key1)
         let num2 = extractNumber(from: key2)
@@ -322,6 +367,7 @@ struct FillInQuestionView: View {
 struct QuizEssayQuestionView: View {
     let item: QuizItem
     @Binding var answer: String
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("あなたの回答:")
