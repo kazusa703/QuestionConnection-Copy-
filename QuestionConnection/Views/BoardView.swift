@@ -34,6 +34,12 @@ struct BoardView: View {
     private var filteredPool: [Question] {
         var result = viewModel.questions
         
+        // ★★★ 追加: 自分の投稿を除外する処理 ★★★
+        if let currentUserId = authViewModel.userSub {
+            result = result.filter { $0.authorId != currentUserId }
+        }
+        // ------------------------------------------
+        
         // 1. テキスト検索 (タイトル / タグ / 問題番号)
         if !searchText.isEmpty {
             let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -274,7 +280,6 @@ struct BoardView: View {
         .sheet(isPresented: $showingFilterSheet) {
             NavigationStack {
                 Form {
-                    // ★★★ 追加: 検索欄をフィルターシートの最上部に移動 ★★★
                     Section(header: Text("キーワード検索")) {
                         TextField("タイトル・タグ・問題番号で検索", text: $searchText)
                             .textFieldStyle(.roundedBorder)
