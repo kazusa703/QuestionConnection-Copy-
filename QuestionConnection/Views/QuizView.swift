@@ -10,10 +10,9 @@ struct QuizView: View {
     @Environment(\.showAuthenticationSheet) private var showAuthenticationSheet
     @Environment(\.dismiss) var dismiss
     @State private var currentQuizIndex = 0
-    @State private var userAnswers: [String: [String:  String]] = [:]
+    @State private var userAnswers: [String: [String: String]] = [:]
     @State private var showResult = false
     @State private var showEssayConfirm = false
-    @State private var hasEssayQuestion = false
     @State private var isInCorrect = false
     @State private var isPendingSubmission = false
     private let adManager = InterstitialAdManager()
@@ -24,7 +23,7 @@ struct QuizView: View {
         ZStack {
             VStack(spacing: 16) {
                 ProgressView(value: Double(currentQuizIndex + 1), total: Double(question.quizItems.count))
-                    . padding()
+                    .padding()
                 if currentQuizIndex < question.quizItems.count {
                     VStack(alignment: .leading, spacing: 12) {
                         let currentItem = question.quizItems[currentQuizIndex]
@@ -42,22 +41,22 @@ struct QuizView: View {
                         if currentItem.type == .choice {
                             ChoiceQuestionView(
                                 item: currentItem,
-                                answer:  Binding(
-                                    get:  { userAnswers[currentItem.id]?["choice"] ?? "" },
+                                answer: Binding(
+                                    get: { userAnswers[currentItem.id]?["choice"] ?? "" },
                                     set: { userAnswers[currentItem.id, default: [:]]["choice"] = $0 }
                                 )
                             )
-                        } else if currentItem.type == . fillIn {
+                        } else if currentItem.type == .fillIn {
                             FillInQuestionView(
                                 item: currentItem,
-                                answers:  Binding(
-                                    get:  { userAnswers[currentItem.id] ?? [: ] },
-                                    set:  { userAnswers[currentItem.id] = $0 }
+                                answers: Binding(
+                                    get: { userAnswers[currentItem.id] ?? [:] },
+                                    set: { userAnswers[currentItem.id] = $0 }
                                 )
                             )
-                        } else if currentItem.type == . essay {
+                        } else if currentItem.type == .essay {
                             QuizEssayQuestionView(
-                                item:  currentItem,
+                                item: currentItem,
                                 answer: Binding(
                                     get: { userAnswers[currentItem.id]?["essay"] ?? "" },
                                     set: { userAnswers[currentItem.id, default: [:]]["essay"] = $0 }
@@ -74,7 +73,7 @@ struct QuizView: View {
                         .frame(maxWidth: .infinity)
                         .padding(12)
                         .background(Color.blue)
-                        . foregroundColor(.white)
+                        .foregroundColor(.white)
                         .cornerRadius(8)
                 }
                 .padding()
@@ -110,36 +109,53 @@ struct QuizView: View {
                 QuizIncorrectView(
                     currentItem: question.quizItems[currentQuizIndex],
                     userAnswer: userAnswers[question.quizItems[currentQuizIndex].id] ?? [:],
-                    hasEssay: hasEssay
+                    onClose: {
+                        showResult = false
+                        navManager.popToRoot(tab: 0)
+                        navManager.tabSelection = 0
+                    }
                 )
                 .environmentObject(navManager)
             } else {
-                QuizCompleteViewWrapper(
+                QuizCompleteView(
                     question: question,
                     hasEssay: hasEssay,
-                    dismissAction: {
+                    onClose: {
+                        showResult = false
                         navManager.popToRoot(tab: 0)
                         navManager.tabSelection = 0
-                        dismiss()
+                    },
+                    onDMTap: {
+                        showResult = false
+                        navManager.popToRoot(tab: 2)
+                        navManager.tabSelection = 2
                     }
                 )
                 .environmentObject(authViewModel)
                 .environmentObject(profileViewModel)
+                .environmentObject(navManager)
             }
         }
     }
     private func handleAnswerTap() {
         let currentItem = question.quizItems[currentQuizIndex]
         let userAnswer = userAnswers[currentItem.id] ?? [:]
+        if currentItem.type == .essay {
+            if currentQuizIndex + 1 < question.quizItems.count {
+                proceedToNextQuestion()
+            } else {
+                if !authViewModel.isSignedIn {
+                    isPendingSubmission = true
+                    showAuthenticationSheet.wrappedValue = true
+                    return
+                }
+                submitAllAnswers()
+            }
+            return
+        }
         let isCorrect = checkAnswer(item: currentItem, userAnswer: userAnswer)
         if isCorrect {
             if currentQuizIndex + 1 < question.quizItems.count {
-                let nextItem = question.quizItems[currentQuizIndex + 1]
-                if nextItem.type == .essay {
-                    hasEssayQuestion = true
-                    showEssayConfirm = true
-                    return
-                }
                 proceedToNextQuestion()
             } else {
                 if !authViewModel.isSignedIn {
@@ -151,22 +167,7 @@ struct QuizView: View {
             }
         } else {
             isInCorrect = true
-            if hasEssay {
-                if !authViewModel.isSignedIn {
-                    isPendingSubmission = true
-                    showAuthenticationSheet.wrappedValue = true
-                    return
-                }
-                Task {
-                    _ = await viewModel.submitAllAnswers(
-                        questionId: question.questionId,
-                        answers: userAnswers
-                    )
-                    await MainActor.run { showResult = true }
-                }
-            } else {
-                showResult = true
-            }
+            showResult = true
         }
     }
     private func proceedToNextQuestion() {
@@ -208,15 +209,15 @@ struct QuizView: View {
     }
     private func checkAnswer(item: QuizItem, userAnswer: [String: String]) -> Bool {
         switch item.type {
-        case . choice:
+        case .choice:
             let selectedId = userAnswer["choice"] ?? ""
             return selectedId == item.correctAnswerId
         case .fillIn:
             let correctAnswers = item.fillInAnswers
             if correctAnswers.isEmpty { return false }
             for (key, correctValue) in correctAnswers {
-                let userValue = userAnswer[key] ??  ""
-                if userValue.trimmingCharacters(in: . whitespacesAndNewlines) != correctValue.trimmingCharacters(in:  .whitespacesAndNewlines) {
+                let userValue = userAnswer[key] ?? ""
+                if userValue.trimmingCharacters(in: .whitespacesAndNewlines) != correctValue.trimmingCharacters(in: .whitespacesAndNewlines) {
                     return false
                 }
             }
@@ -260,7 +261,7 @@ struct ChoiceQuestionView: View {
                     Button(action: { answer = choice.id }) {
                         HStack(spacing: 12) {
                             Image(systemName: answer == choice.id ? "checkmark.circle.fill" : "circle")
-                                .foregroundColor(answer == choice.id ? . blue : .gray)
+                                .foregroundColor(answer == choice.id ? .blue : .gray)
                             Text(choice.text)
                                 .foregroundColor(.primary)
                                 .multilineTextAlignment(.leading)
@@ -280,7 +281,7 @@ struct ChoiceQuestionView: View {
 struct FillInQuestionView: View {
     let item: QuizItem
     @Binding var answers: [String: String]
-    var body:  some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !item.fillInAnswers.isEmpty {
                 ForEach(Array(item.fillInAnswers.keys.sorted { sortKeys($0, $1) }), id: \.self) { key in
@@ -291,7 +292,7 @@ struct FillInQuestionView: View {
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }
-                        TextField("回答を入力", text:  Binding(
+                        TextField("回答を入力", text: Binding(
                             get: { answers[key] ?? "" },
                             set: { answers[key] = $0 }
                         ))
@@ -307,18 +308,18 @@ struct FillInQuestionView: View {
         }
         .padding()
     }
-    private func extractNumber(from key:  String) -> Int {
+    private func extractNumber(from key: String) -> Int {
         let cleaned = key.replacingOccurrences(of: "穴", with: "")
         return Int(cleaned) ?? 0
     }
     private func sortKeys(_ key1: String, _ key2: String) -> Bool {
-        let num1 = extractNumber(from:  key1)
+        let num1 = extractNumber(from: key1)
         let num2 = extractNumber(from: key2)
         return num1 < num2
     }
 }
 
-struct QuizEssayQuestionView:  View {
+struct QuizEssayQuestionView: View {
     let item: QuizItem
     @Binding var answer: String
     var body: some View {
@@ -338,18 +339,5 @@ struct QuizEssayQuestionView:  View {
                 .foregroundColor(.secondary)
         }
         .padding()
-    }
-}
-
-struct QuizCompleteViewWrapper: View {
-    let question: Question
-    let hasEssay: Bool
-    let dismissAction: () -> Void
-    var body: some View {
-        QuizCompleteView(
-            question: question,
-            hasEssay: hasEssay,
-            onClose: dismissAction
-        )
     }
 }

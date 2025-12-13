@@ -23,9 +23,12 @@ struct CreateQuestionView: View {
     @State private var alertMessage = ""
     @State private var isAdLoading = false
     @State private var showConfirmation = false
+    @State private var showReorderAlert = false
+    
     var shouldShowBanner: Bool {
         !subscriptionManager.isPremium
     }
+    
     var body: some View {
         VStack(spacing: 0) {
             if shouldShowBanner {
@@ -46,6 +49,13 @@ struct CreateQuestionView: View {
         } message: {
             Text(alertMessage)
         }
+        .alert("問題の順番を変更しました", isPresented: $showReorderAlert) {
+            Button("OK") {
+                showConfirmation = true
+            }
+        } message: {
+            Text("記述式問題は最後に配置されました。")
+        }
         .sheet(isPresented: $showConfirmation) {
             QuestionConfirmationView(
                 title: title,
@@ -64,6 +74,7 @@ struct CreateQuestionView: View {
             adManager.loadAd()
         }
     }
+    
     private var basicInfoSection: some View {
         Section(header: Text("質問の基本情報")) {
             TextField("題名", text: $title)
@@ -95,6 +106,7 @@ struct CreateQuestionView: View {
             TextField("全問正解者へのメッセージ", text: $dmInviteMessage)
         }
     }
+    
     private var quizItemsSection: some View {
         ForEach(quizItems.indices, id: \.self) { index in
             Section(header: Text("問題 \(index + 1)")) {
@@ -111,6 +123,7 @@ struct CreateQuestionView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                
                 switch quizItems[index].type {
                 case .choice:
                     ChoiceQuestionEditor(item: Binding(
@@ -138,6 +151,7 @@ struct CreateQuestionView: View {
             }
         }
     }
+    
     private var submitButtonSection: some View {
         Group {
             Button("問題を追加") {
@@ -147,7 +161,12 @@ struct CreateQuestionView: View {
                 Button {
                     if authViewModel.isSignedIn {
                         if validateInputs() {
-                            showConfirmation = true
+                            let needsReorder = checkAndReorderQuizItems()
+                            if needsReorder {
+                                showReorderAlert = true
+                            } else {
+                                showConfirmation = true
+                            }
                         }
                     } else {
                         showAuthenticationSheet.wrappedValue = true
@@ -168,6 +187,31 @@ struct CreateQuestionView: View {
             }
         }
     }
+    
+    private func checkAndReorderQuizItems() -> Bool {
+        var nonEssayItems: [QuizItem] = []
+        var essayItems: [QuizItem] = []
+        for item in quizItems {
+            if item.type == .essay {
+                essayItems.append(item)
+            } else {
+                nonEssayItems.append(item)
+            }
+        }
+        let reorderedItems = nonEssayItems + essayItems
+        var needsReorder = false
+        for (index, item) in quizItems.enumerated() {
+            if item.id != reorderedItems[index].id {
+                needsReorder = true
+                break
+            }
+        }
+        if needsReorder {
+            quizItems = reorderedItems
+        }
+        return needsReorder
+    }
+    
     private func validateInputs() -> Bool {
         if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             alertMessage = "題名が空白です。"
@@ -226,6 +270,7 @@ struct CreateQuestionView: View {
         }
         return true
     }
+    
     private func executeFinalPost() {
         if subscriptionManager.isPremium {
             executePostAPI()
@@ -243,6 +288,7 @@ struct CreateQuestionView: View {
             }
         }
     }
+    
     private func executePostAPI() {
         let renumberedItems = renumberHolesInQuizItems(quizItems)
         Task {
@@ -271,6 +317,7 @@ struct CreateQuestionView: View {
             }
         }
     }
+    
     private func renumberHolesInQuizItems(_ items: [QuizItem]) -> [QuizItem] {
         return items.map { item in
             if item.type == .fillIn {
@@ -279,6 +326,7 @@ struct CreateQuestionView: View {
             return item
         }
     }
+    
     private func renumberHoles(in item: QuizItem) -> QuizItem {
         var newItem = item
         var text = convertOldHoleFormat(item.questionText)
@@ -348,6 +396,7 @@ struct ChoiceQuestionEditor: View {
             item.choices.append(Choice(id: UUID().uuidString, text: ""))
         }
     }
+    
     private func deleteChoice(at index: Int) {
         let deletedId = item.choices[index].id
         item.choices.remove(at: index)
@@ -362,6 +411,7 @@ struct FillInQuestionEditor: View {
     @State private var tempText: String = ""
     @State private var showDeleteAlert = false
     @State private var holeToDelete: Int? = nil
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 8) {
@@ -464,6 +514,7 @@ struct FillInQuestionEditor: View {
             }
         }
     }
+    
     func convertOldFillInAnswers() {
         var newAnswers: [String: String] = [:]
         for (key, value) in item.fillInAnswers {
@@ -474,11 +525,13 @@ struct FillInQuestionEditor: View {
             item.fillInAnswers = newAnswers
         }
     }
+    
     func insertHole() {
         let nextNumber = findNextHoleNumber()
         let holeTag = "[\(nextNumber)]"
         tempText += holeTag
     }
+    
     func findNextHoleNumber() -> Int {
         let pattern = "\\[(\\d+)\\]"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return 1 }
@@ -497,10 +550,12 @@ struct FillInQuestionEditor: View {
         }
         return nextNumber
     }
+    
     func deleteHole(number: Int) {
         tempText = tempText.replacingOccurrences(of: "[\(number)]", with: "")
         item.fillInAnswers.removeValue(forKey: "\(number)")
     }
+    
     func syncAnswers() {
         let pattern = "\\[(\\d+)\\]"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
@@ -517,6 +572,7 @@ struct FillInQuestionEditor: View {
         }
         item.fillInAnswers = item.fillInAnswers.filter { foundKeys.contains($0.key) }
     }
+    
     private func sortKeys(_ key1: String, _ key2: String) -> Bool {
         let num1 = Int(key1) ?? 0
         let num2 = Int(key2) ?? 0
@@ -555,6 +611,7 @@ struct QuestionConfirmationView: View {
     let isLoading: Bool
     let onPost: () -> Void
     @Environment(\.dismiss) var dismiss
+    
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -708,6 +765,7 @@ struct QuestionConfirmationView: View {
             }
         }
     }
+    
     private func itemTypeString(_ type: QuizType) -> String {
         switch type {
         case .choice: return "選択式"
