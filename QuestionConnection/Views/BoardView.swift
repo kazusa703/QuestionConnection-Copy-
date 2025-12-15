@@ -5,6 +5,7 @@ struct BoardView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
     @EnvironmentObject private var profileViewModel: ProfileViewModel
     @EnvironmentObject private var subscriptionManager: SubscriptionManager
+    @EnvironmentObject private var navManager: NavigationManager
 
     // フィルタリング設定
     @State private var showingFilterSheet = false
@@ -25,6 +26,9 @@ struct BoardView: View {
     // ランダム表示用の一時リスト
     @State private var randomQuestions: [Question] = []
 
+    // 追加の状態
+    @State private var answeredQuestionIds: Set<String> = []
+
     enum SortOption {
         case newest
         case oldest
@@ -39,6 +43,9 @@ struct BoardView: View {
         if let currentUserId = authViewModel.userSub {
             result = result.filter { $0.authorId != currentUserId }
         }
+        
+        // 自分が回答済みのものを除外
+        result = result.filter { !answeredQuestionIds.contains($0.questionId) }
         
         // ★★★ 変更: タイトル検索 ★★★
         if !searchTitle.isEmpty {
@@ -406,18 +413,31 @@ struct BoardView: View {
             viewModel.setAuthViewModel(authViewModel)
             await viewModel.fetchQuestions()
         }
-        .refreshable {
-            await viewModel.fetchQuestions()
-            if sortOption == .random {
-                reshuffleRandomQuestions()
+        // タブ復帰時に再フェッチ
+        .onChange(of: navManager.tabSelection) { _, newValue in
+            if newValue == 0 {
+                Task {
+                    print("📌 BoardView: tabSelection->0 再フェッチ")
+                    await viewModel.fetchQuestions()
+                    if sortOption == .random { reshuffleRandomQuestions() }
+                }
             }
         }
-        // ★★★ 変更: onChange ★★★
-        .onChange(of: searchTitle) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
-        .onChange(of: searchQuestionId) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
-        .onChange(of: selectedPurpose) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
-        .onChange(of: showingOnlyBookmarks) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
-        .onChange(of: selectedTags) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
+        // 掲示板へ通知受信: questionId を受け取り、即除外＋再フェッチ
+        .onReceive(NotificationCenter.default.publisher(for: .boardShouldRefresh)) { note in
+            if let qid = note.object as? String {
+                answeredQuestionIds.insert(qid)
+            }
+            Task {
+                print("📌 BoardView: boardShouldRefresh 受信 再フェッチ")
+                await viewModel.fetchQuestions()
+                if sortOption == .random { reshuffleRandomQuestions() }
+            }
+        }
+        // 回答済みIDが増えたらランダムリストも更新
+        .onChange(of: answeredQuestionIds) { _, _ in
+            if sortOption == .random { reshuffleRandomQuestions() }
+        }
     }
 
     private func reshuffleRandomQuestions() {

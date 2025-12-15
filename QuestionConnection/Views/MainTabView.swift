@@ -18,7 +18,7 @@ struct MainTabView: View {
                 }
                 .tabItem {
                     Image(systemName: "list.bullet.rectangle.portrait")
-                    Text("質問")
+                    Text("掲示板")
                 }
                 .tag(0)
                 

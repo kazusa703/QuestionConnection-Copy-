@@ -12,6 +12,17 @@ struct QuizCompleteView: View {
 
     @State private var showDMGuide = false
 
+    // 共通ハンドラ
+    private func handleBackToBoard() {
+        dismiss()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            navManager.popToRoot(tab: 0)
+            navManager.tabSelection = 0
+            // 解答した questionId を通知に載せる
+            NotificationCenter.default.post(name: .boardShouldRefresh, object: question.questionId)
+        }
+    }
+
     var body: some View {
         VStack(spacing: 20) {
             if hasEssay {
@@ -67,13 +78,15 @@ struct QuizCompleteView: View {
             if hasEssay {
                 // プロフィールタブに移動
                 Button(action: {
+                    // ★★★ 修正: onCloseを呼び出してから遷移 ★★★
+                    onClose?()
                     dismiss()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        // ★★★ 追加: 掲示板タブ(0)もルートに戻す ★★★
-                        navManager.popToRoot(tab: 0)
+                        // 掲示板タブをルートに戻す
+                        navManager.questionPath = NavigationPath()
                         
                         // プロフィールタブに移動
-                        navManager.popToRoot(tab: 3)
+                        navManager.profilePath = NavigationPath()
                         navManager.tabSelection = 3
                     }
                 }) {
@@ -84,14 +97,27 @@ struct QuizCompleteView: View {
                         .foregroundColor(.white)
                         .cornerRadius(8)
                 }
+                
+                // ★★★ 追加: 掲示板へボタン ★★★
+                Button(action: handleBackToBoard) {
+                    Text("掲示板へ")
+                        .frame(maxWidth: .infinity)
+                        .padding(12)
+                        .background(Color.blue.opacity(0.12))
+                        .foregroundColor(.blue)
+                        .cornerRadius(8)
+                }
             } else {
                 Button(action: {
                     if let action = onDMTap {
                         action()
                     } else {
+                        onClose?()
                         dismiss()
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            navManager.popToRoot(tab: 2)
+                            // ★★★ 修正: 掲示板タブもリセット ★★★
+                            navManager.questionPath = NavigationPath()
+                            navManager.dmPath = NavigationPath()
                             navManager.tabSelection = 2
                         }
                     }
@@ -106,27 +132,35 @@ struct QuizCompleteView: View {
                     .foregroundColor(.white)
                     .cornerRadius(8)
                 }
-
-                // 掲示板に戻るで案内画面を表示
+                
+                // ★★★ 追加: 掲示板へボタン ★★★
+                Button(action: handleBackToBoard) {
+                    Text("掲示板へ")
+                        .frame(maxWidth: .infinity)
+                        .padding(12)
+                        .background(Color.blue.opacity(0.12))
+                        .foregroundColor(.blue)
+                        .cornerRadius(8)
+                }
+                
+                // 後でボタン
                 Button(action: {
                     showDMGuide = true
                 }) {
-                    Text("掲示板に戻る")
+                    Text("後で")
                         .frame(maxWidth: .infinity)
                         .padding(12)
-                        .background(Color.gray.opacity(0.3))
-                        .foregroundColor(.primary)
-                        .cornerRadius(8)
+                        .foregroundColor(.secondary)
                 }
             }
         }
-        .padding(20)
-        .presentationDetents([hasEssay ? .fraction(0.4) : .fraction(0.55)])
+        .padding(24)
         .sheet(isPresented: $showDMGuide) {
             DMGuideView(isPresented: $showDMGuide) {
+                onClose?()
                 dismiss()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    navManager.popToRoot(tab: 0)
+                    navManager.questionPath = NavigationPath()
                     navManager.tabSelection = 0
                 }
             }
