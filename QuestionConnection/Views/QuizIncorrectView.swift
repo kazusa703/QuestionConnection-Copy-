@@ -3,9 +3,11 @@ import SwiftUI
 struct QuizIncorrectView: View {
     let currentItem: QuizItem
     let userAnswer: [String: String]
+    let questionId: String  // ★★★ 追加 ★★★
     var onClose: (() -> Void)? = nil
     @EnvironmentObject var navManager: NavigationManager
     @Environment(\.dismiss) var dismiss
+
     var body: some View {
         VStack(spacing: 20) {
             VStack(spacing: 12) {
@@ -13,11 +15,12 @@ struct QuizIncorrectView: View {
                     .font(.system(size: 60))
                     .foregroundColor(.red)
                 Text("不正解です ✗")
-                    .font(. headline)
+                    .font(.headline)
             }
             .padding(20)
             .background(Color.red.opacity(0.1))
             .cornerRadius(12)
+
             VStack(alignment: .leading, spacing: 12) {
                 Text("正解:")
                     .font(.subheadline)
@@ -27,30 +30,32 @@ struct QuizIncorrectView: View {
                     .font(.body)
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    . background(Color.green.opacity(0.1))
-                    . cornerRadius(8)
+                    .background(Color.green.opacity(0.1))
+                    .cornerRadius(8)
+
                 Divider()
+
                 Text("あなたの回答:")
                     .font(.subheadline)
-                    .fontWeight(. bold)
+                    .fontWeight(.bold)
                 let userAnswerText = getUserAnswerText()
                 Text(userAnswerText)
                     .font(.body)
                     .padding(12)
-                    .frame(maxWidth: .infinity, alignment: . leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.red.opacity(0.1))
                     .cornerRadius(8)
             }
             .padding()
+
             Spacer()
+
+            // ★★★ 修正: 終了ボタン ★★★
             Button(action: {
-                if let action = onClose {
-                    action()
-                } else {
-                    navManager.popToRoot(tab: 0)
-                    navManager.tabSelection = 0
-                    dismiss()
-                }
+                print("🔴 [QuizIncorrectView] 終了ボタンがタップされました")
+                print("🔴 [QuizIncorrectView] forcePopToBoard 通知を送信します questionId=\(questionId)")
+                NotificationCenter.default.post(name: .forcePopToBoard, object: questionId)
+                print("🔴 [QuizIncorrectView] forcePopToBoard 通知を送信しました")
             }) {
                 Text("終了")
                     .frame(maxWidth: .infinity)
@@ -62,7 +67,11 @@ struct QuizIncorrectView: View {
         }
         .padding(20)
         .presentationDetents([.fraction(0.6)])
+        .onAppear {
+            print("🔴 [QuizIncorrectView] 画面が表示されました questionId=\(questionId)")
+        }
     }
+
     private func getCorrectAnswerText() -> String {
         switch currentItem.type {
         case .choice:
@@ -80,10 +89,11 @@ struct QuizIncorrectView: View {
             return currentItem.modelAnswer ?? "N/A"
         }
     }
+
     private func getUserAnswerText() -> String {
         switch currentItem.type {
         case .choice:
-            let selectedId = userAnswer["choice"] ??  ""
+            let selectedId = userAnswer["choice"] ?? ""
             if !selectedId.isEmpty, !currentItem.choices.isEmpty {
                 return currentItem.choices.first(where: { $0.id == selectedId })?.text ?? "未回答"
             }
@@ -101,11 +111,4 @@ struct QuizIncorrectView: View {
             return userAnswer["essay"] ?? "未回答"
         }
     }
-}
-
-#Preview {
-    QuizIncorrectView(
-        currentItem: QuizItem(id: "1", type: .choice, questionText: "テスト"),
-        userAnswer: ["choice": "wrong"]
-    )
 }

@@ -5,6 +5,7 @@ struct QuizView: View {
     @StateObject private var viewModel = QuizViewModel()
     @EnvironmentObject private var authViewModel: AuthViewModel
     @EnvironmentObject private var profileViewModel: ProfileViewModel
+    @EnvironmentObject private var dmViewModel: DMViewModel  // ★ 追加（QuizCompleteView用）
     @EnvironmentObject private var subscriptionManager: SubscriptionManager
     @EnvironmentObject private var navManager: NavigationManager
     @Environment(\.showAuthenticationSheet) private var showAuthenticationSheet
@@ -37,7 +38,6 @@ struct QuizView: View {
                                 .font(.headline)
                             
                             if currentItem.type == .fillIn {
-                                // CreateQuestionViewで定義されたFillInQuestionTextOutlinedを使用
                                 FillInQuestionTextOutlined(text: currentItem.questionText)
                             } else {
                                 Text(currentItem.questionText)
@@ -130,9 +130,10 @@ struct QuizView: View {
                 QuizIncorrectView(
                     currentItem: question.quizItems[currentQuizIndex],
                     userAnswer: userAnswers[question.quizItems[currentQuizIndex].id] ?? [:],
+                    // ★★★ 追加: questionId ★★★
+                    questionId: question.questionId,
                     onClose: {
                         showResult = false
-                        // ナビゲーションリセット
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                             navManager.popToRoot(tab: 0)
                             navManager.tabSelection = 0
@@ -161,8 +162,14 @@ struct QuizView: View {
                 )
                 .environmentObject(authViewModel)
                 .environmentObject(profileViewModel)
+                .environmentObject(dmViewModel)  // ★ 追加
                 .environmentObject(navManager)
             }
+        }
+        // ★★★ 追加: forcePopToBoard 通知を受信 ★★★
+        .onReceive(NotificationCenter.default.publisher(for: .forcePopToBoard)) { _ in
+            print("🟠 [QuizView] forcePopToBoard 受信 - showResult を false にします")
+            showResult = false
         }
     }
     
@@ -170,6 +177,7 @@ struct QuizView: View {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
     
+    // ★★★ 修正: handleAnswerTap ★★★
     private func handleAnswerTap() {
         hideKeyboard()
         let currentItem = question.quizItems[currentQuizIndex]
@@ -202,8 +210,38 @@ struct QuizView: View {
                 submitAllAnswers()
             }
         } else {
+            // ★★★ 修正: 不正解の場合 ★★★
+            print("🔴 [QuizView] 不正解 - APIに回答を送信します")
+            if !authViewModel.isSignedIn {
+                isPendingSubmission = true
+                showAuthenticationSheet.wrappedValue = true
+                return
+            }
+            
+            // ★★★ 先に isInCorrect を true にする ★★★
             isInCorrect = true
-            showResult = true
+            
+            // ★★★ ローカルで回答済みとして記録 ★★★
+            profileViewModel.markQuestionAsAnswered(questionId: question.questionId)
+            print("🔴 [QuizView] profileViewModel に回答済みとして記録: \(question.questionId)")
+            
+            // APIに送信してから結果画面を表示
+            Task {
+                let success = await viewModel.submitAllAnswers(
+                    questionId: question.questionId,
+                    answers: userAnswers
+                )
+                await MainActor.run {
+                    print("🔴 [QuizView] 不正解回答送信結果: \(success)")
+                    if subscriptionManager.isPremium {
+                        showResult = true
+                    } else {
+                        adManager.showAd {
+                            showResult = true
+                        }
+                    }
+                }
+            }
         }
     }
     
@@ -233,6 +271,10 @@ struct QuizView: View {
             )
             await MainActor.run {
                 if success {
+                    // ▼▼▼ 追加: 回答成功時にIDを記録 ▼▼▼
+                    profileViewModel.markQuestionAsAnswered(questionId: question.questionId)
+                    // ▲▲▲ 追加ここまで ▲▲▲
+                    
                     isInCorrect = false
                     if subscriptionManager.isPremium {
                         showResult = true
@@ -329,7 +371,6 @@ struct FillInQuestionView: View {
                 ForEach(Array(item.fillInAnswers.keys.sorted { sortKeys($0, $1) }), id: \.self) { key in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 4) {
-                            // 修正: FillInAnswerBox -> FillInBoxSmall (CreateQuestionViewで定義済みのものを使用)
                             FillInBoxSmall(number: extractNumber(from: key))
                             Text("の回答:")
                                 .font(.subheadline)

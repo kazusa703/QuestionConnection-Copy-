@@ -7,6 +7,7 @@ struct QuestionDetailView: View {
     @EnvironmentObject private var profileViewModel: ProfileViewModel
     
     @Environment(\.showAuthenticationSheet) private var showAuthenticationSheet
+    @Environment(\.dismiss) var dismiss
     
     // アラート・シート管理
     @State private var showReportSheet = false
@@ -300,6 +301,18 @@ struct QuestionDetailView: View {
                 }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .animation(.easeInOut, value: showingReportSuccessToast || showingBlockSuccessToast || showingUnblockSuccessToast)
+            }
+            // ★★★ 修正: forcePopToBoard 通知を受信 ★★★
+            .onReceive(NotificationCenter.default.publisher(for: .forcePopToBoard)) { _ in
+                print("🟡 [QuestionDetailView] forcePopToBoard 受信")
+                print("🟡 [QuestionDetailView] shouldNavigateToQuiz を false にします")
+                shouldNavigateToQuiz = false
+                
+                // ★★★ 追加: 少し待ってから自分自身も閉じる ★★★
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    print("🟡 [QuestionDetailView] dismiss を実行します")
+                    dismiss()
+                }
             }
     } // End body
 

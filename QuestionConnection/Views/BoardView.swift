@@ -16,7 +16,7 @@ struct BoardView: View {
     @State private var selectedTags: [String] = []
     @State private var tagInput: String = ""
 
-    // ★★★ 変更: キーワード検索 → タイトル検索 + 問題番号検索 ★★★
+    // キーワード検索
     @State private var searchTitle = ""
     @State private var searchQuestionId = ""
     
@@ -26,7 +26,7 @@ struct BoardView: View {
     // ランダム表示用の一時リスト
     @State private var randomQuestions: [Question] = []
 
-    // 追加の状態
+    // ★★★ 復活: ローカルでの即時反映用リスト ★★★
     @State private var answeredQuestionIds: Set<String> = []
 
     enum SortOption {
@@ -44,10 +44,14 @@ struct BoardView: View {
             result = result.filter { $0.authorId != currentUserId }
         }
         
-        // 自分が回答済みのものを除外
-        result = result.filter { !answeredQuestionIds.contains($0.questionId) }
+        // ★★★ 修正: 両方のソースから回答済みを除外 ★★★
+        // ローカルの answeredQuestionIds と profileViewModel.answeredQuestionIds の両方をチェック
+        result = result.filter { question in
+            !answeredQuestionIds.contains(question.questionId) &&
+            !profileViewModel.answeredQuestionIds.contains(question.questionId)
+        }
         
-        // ★★★ 変更: タイトル検索 ★★★
+        // タイトル検索
         if !searchTitle.isEmpty {
             let keyword = searchTitle.trimmingCharacters(in: .whitespacesAndNewlines)
             result = result.filter { question in
@@ -55,7 +59,7 @@ struct BoardView: View {
             }
         }
         
-        // ★★★ 変更: 問題番号検索 ★★★
+        // 問題番号検索
         if !searchQuestionId.isEmpty {
             let keyword = searchQuestionId.trimmingCharacters(in: .whitespacesAndNewlines)
             result = result.filter { question in
@@ -109,7 +113,6 @@ struct BoardView: View {
         }
     }
     
-    // ★★★ 追加: フィルターが適用されているかどうか ★★★
     private var hasActiveFilters: Bool {
         !searchTitle.isEmpty || !searchQuestionId.isEmpty || !selectedPurpose.isEmpty || !selectedTags.isEmpty
     }
@@ -141,14 +144,12 @@ struct BoardView: View {
                                 .cornerRadius(8)
                         }
                         
-                        // ★★★ 変更: タイトル検索バッジ ★★★
                         if !searchTitle.isEmpty {
                             FilterBadge(text: "📝 \(searchTitle)") {
                                 searchTitle = ""
                             }
                         }
                         
-                        // ★★★ 追加: 問題番号検索バッジ ★★★
                         if !searchQuestionId.isEmpty {
                             FilterBadge(text: "🔢 \(searchQuestionId)") {
                                 searchQuestionId = ""
@@ -171,7 +172,7 @@ struct BoardView: View {
                     .padding(.vertical, 8)
                 }
                 .background(Color(UIColor.systemBackground))
-                Divider()
+                .overlay(Rectangle().frame(height: 1).foregroundColor(Color.gray.opacity(0.2)), alignment: .bottom)
             }
 
             // --- 質問リスト ---
@@ -261,6 +262,10 @@ struct BoardView: View {
                     }
                 }
                 .listStyle(.plain)
+                .refreshable {
+                    await viewModel.fetchQuestions()
+                    if sortOption == .random { reshuffleRandomQuestions() }
+                }
             }
         }
         .navigationTitle("掲示板")
@@ -304,24 +309,21 @@ struct BoardView: View {
                 }
             }
         }
-        // ★★★ 変更: フィルターシート ★★★
+        // フィルターシート
         .sheet(isPresented: $showingFilterSheet) {
             NavigationStack {
                 Form {
-                    // タイトルで検索
                     Section(header: Text("タイトルで検索")) {
                         TextField("タイトルを入力", text: $searchTitle)
                             .textFieldStyle(.roundedBorder)
                     }
                     
-                    // 問題番号で検索
                     Section(header: Text("問題番号で検索")) {
                         TextField("問題番号を入力 (例: 12345)", text: $searchQuestionId)
                             .textFieldStyle(.roundedBorder)
                             .keyboardType(.asciiCapable)
                     }
                     
-                    // 目的で絞り込む
                     Section(header: Text("目的で絞り込む")) {
                         Picker("目的", selection: $selectedPurpose) {
                             Text("指定なし").tag("")
@@ -331,15 +333,12 @@ struct BoardView: View {
                         }
                     }
                     
-                    // タグで絞り込む
                     Section(header: Text("タグで絞り込む (AND検索)")) {
                         HStack {
                             TextField("タグを入力 (例: swift)", text: $tagInput)
                                 .textFieldStyle(.roundedBorder)
                                 .submitLabel(.done)
-                                .onSubmit {
-                                    addTagFromInput()
-                                }
+                                .onSubmit { addTagFromInput() }
                             
                             Button(action: addTagFromInput) {
                                 Image(systemName: "plus.circle.fill")
@@ -359,9 +358,7 @@ struct BoardView: View {
                                                 .fontWeight(.bold)
                                                 .foregroundColor(.white)
                                             
-                                            Button {
-                                                removeTag(tag)
-                                            } label: {
+                                            Button { removeTag(tag) } label: {
                                                 Image(systemName: "xmark")
                                                     .font(.caption)
                                                     .foregroundColor(.white)
@@ -382,7 +379,6 @@ struct BoardView: View {
                         }
                     }
                     
-                    // リセットボタン
                     Section {
                         Button(role: .destructive) {
                             searchTitle = ""
@@ -401,9 +397,7 @@ struct BoardView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("完了") {
-                            showingFilterSheet = false
-                        }
+                        Button("完了") { showingFilterSheet = false }
                     }
                 }
             }
@@ -423,10 +417,13 @@ struct BoardView: View {
                 }
             }
         }
-        // 掲示板へ通知受信: questionId を受け取り、即除外＋再フェッチ
+        // 掲示板へ通知受信: ViewModelとローカル状態の両方を更新
         .onReceive(NotificationCenter.default.publisher(for: .boardShouldRefresh)) { note in
             if let qid = note.object as? String {
+                // ローカル状態に追加 (即時反映用)
                 answeredQuestionIds.insert(qid)
+                // ViewModelに追加 (全体反映用)
+                profileViewModel.markQuestionAsAnswered(questionId: qid)
             }
             Task {
                 print("📌 BoardView: boardShouldRefresh 受信 再フェッチ")
@@ -434,8 +431,8 @@ struct BoardView: View {
                 if sortOption == .random { reshuffleRandomQuestions() }
             }
         }
-        // 回答済みIDが増えたらランダムリストも更新
-        .onChange(of: answeredQuestionIds) { _, _ in
+        // ViewModelの回答済みIDが増えたらランダムリストも更新
+        .onChange(of: profileViewModel.answeredQuestionIds) { _, _ in
             if sortOption == .random { reshuffleRandomQuestions() }
         }
     }
@@ -449,14 +446,11 @@ struct BoardView: View {
     private func addTagFromInput() {
         let trimmedTag = tagInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTag.isEmpty else { return }
-        
         guard !selectedTags.contains(where: { $0.caseInsensitiveCompare(trimmedTag) == .orderedSame }) else {
             tagInput = ""
             return
         }
-        
         guard selectedTags.count < 5 else { return }
-        
         selectedTags.append(trimmedTag)
         tagInput = ""
     }

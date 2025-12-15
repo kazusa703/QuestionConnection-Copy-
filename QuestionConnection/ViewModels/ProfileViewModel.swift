@@ -228,6 +228,10 @@ class ProfileViewModel: ObservableObject {
     @Published var customNicknames: [String: String] = [:]
     private let customNicknamesKey = "my_custom_nicknames"
     
+    // ▼▼▼ 追加: 回答済みの質問IDを管理するリスト ▼▼▼
+    @Published var answeredQuestionIds: Set<String> = []
+    // ▲▲▲ 追加ここまで ▲▲▲
+    
     // 初期化時に読み込むためのメソッド
     func loadCustomNicknames() {
         if let saved = UserDefaults.standard.dictionary(forKey: customNicknamesKey) as? [String: String] {
@@ -289,9 +293,18 @@ class ProfileViewModel: ObservableObject {
                 await fetchBookmarks()
                 await fetchBlocklist()
                 await checkAndRegisterPendingDeviceToken()
+                // アプリ起動時に自分の回答履歴を取得して、回答済みリストを更新する
+                await fetchMyGradedAnswers()
             }
         }
     }
+    
+    // ▼▼▼ 追加: 質問を回答済みにするメソッド ▼▼▼
+    func markQuestionAsAnswered(questionId: String) {
+        print("📝 [ProfileViewModel] markQuestionAsAnswered:  \(questionId)")
+        answeredQuestionIds.insert(questionId)
+    }
+    // ▲▲▲ 追加ここまで ▲▲▲
     
     // MARK: - 採点機能関連メソッド (Core Features)
     
@@ -342,6 +355,14 @@ class ProfileViewModel: ObservableObject {
             
             let logs = try JSONDecoder().decode([AnswerLogItem].self, from: data)
             self.myGradedAnswers = logs
+            
+            // ▼▼▼ 追加: 取得した履歴から回答済みIDリストを更新 ▼▼▼
+            await MainActor.run {
+                let ids = logs.map { $0.questionId }
+                self.answeredQuestionIds.formUnion(ids)
+            }
+            // ▲▲▲ 追加ここまで ▲▲▲
+            
         } catch {
             print("自分の回答履歴取得失敗: \(error)")
         }
