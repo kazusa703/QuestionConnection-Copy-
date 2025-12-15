@@ -18,6 +18,7 @@ struct QuestionAnalyticsResult: Codable {
 
 struct UserProfile: Codable {
     let nickname: String?
+    let bio: String? // 自己紹介
     let notifyOnCorrectAnswer: Bool?
     let notifyOnDM: Bool?
     let notifyOnGradeResult: Bool? // 採点結果の通知設定
@@ -180,6 +181,14 @@ class ProfileViewModel: ObservableObject {
     @Published var nicknameAlertMessage: String?
     @Published var showNicknameAlert = false
     
+    // 自己紹介
+    @Published var userBio: String? = nil
+    @Published var userBios: [String: String] = [:]  // キャッシュ用
+    
+    // エラーハンドリング用（自己紹介更新時のNGワードチェック等で使用）
+    @Published var errorMessage: String = ""
+    @Published var showError: Bool = false
+    
     // ブロック・ブックマーク
     @Published var blockedUserIds: Set<String> = []
     @Published var isLoadingBlocklist = false
@@ -213,7 +222,7 @@ class ProfileViewModel: ObservableObject {
     @Published var selectedQuestionForModelAnswer: Question?
     @Published var isFetchingQuestionDetail = false
     
-    // MARK: - ★★★ Mirror Profile (カスタム表示名) ★★★
+    // MARK: - Mirror Profile (カスタム表示名)
     
     // [UserId: CustomName] の形式で保存
     @Published var customNicknames: [String: String] = [:]
@@ -270,7 +279,7 @@ class ProfileViewModel: ObservableObject {
     init(authViewModel: AuthViewModel) {
         self.authViewModel = authViewModel
         
-        // ★★★ あだ名の読み込みを追加 ★★★
+        // あだ名の読み込み
         if let saved = UserDefaults.standard.dictionary(forKey: "my_custom_nicknames") as? [String: String] {
             self.customNicknames = saved
         }
@@ -560,11 +569,15 @@ class ProfileViewModel: ObservableObject {
             }
             let profile = try JSONDecoder().decode(UserProfile.self, from: data)
             self.nickname = profile.nickname ?? ""
+            self.userBio = profile.bio // 自己紹介を同期
             self.notifyOnCorrectAnswer = profile.notifyOnCorrectAnswer ?? false
             self.notifyOnDM = profile.notifyOnDM ?? false
             self.notifyOnGradeResult = profile.notifyOnGradeResult ?? true
             
             userNicknames[userId] = profile.nickname ?? ""
+            if let bio = profile.bio {
+                userBios[userId] = bio
+            }
             if let img = profile.profileImageUrl {
                 userProfileImages[userId] = img
             }
@@ -574,6 +587,7 @@ class ProfileViewModel: ObservableObject {
         isLoadingSettings = false
     }
     
+    // ニックネーム更新
     func updateNickname(userId: String) async {
         guard !userId.isEmpty else { return }
         guard let idToken = await authViewModel.getValidIdToken() else {
@@ -582,6 +596,17 @@ class ProfileViewModel: ObservableObject {
             return
         }
         let nicknameToSave = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // 1. NGワードチェック
+        let result = NGWordFilter.shared.check(nicknameToSave)
+        if case .blocked(let reason) = result {
+            await MainActor.run {
+                self.nicknameAlertMessage = reason
+                self.showNicknameAlert = true
+            }
+            return
+        }
+
         isNicknameLoading = true
         let url = usersApiEndpoint.appendingPathComponent(userId)
         do {
@@ -607,6 +632,99 @@ class ProfileViewModel: ObservableObject {
             showNicknameAlert = true
         }
         isNicknameLoading = false
+    }
+    
+    // 自己紹介更新
+    func updateBio(userId: String, newBio: String) async {
+        guard authViewModel.isSignedIn else {
+            print("❌ updateBio: 未ログイン")
+            return
+        }
+        
+        // 1. NGワードチェック
+        let result = NGWordFilter.shared.check(newBio)
+        if case .blocked(let reason) = result {
+            await MainActor.run {
+                self.errorMessage = reason
+                self.showError = true
+            }
+            return
+        }
+        
+        let url = usersApiEndpoint.appendingPathComponent(userId).appendingPathComponent("settings")
+        
+        print("📤 updateBio URL:  \(url.absoluteString)")
+        print("📤 updateBio userId: \(userId)")
+        print("📤 updateBio bio: \(newBio)")
+        
+        do {
+            guard let idToken = await authViewModel.getValidIdToken() else {
+                print("❌ updateBio: トークン取得失敗")
+                return
+            }
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "PUT"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+            
+            let body = ["bio": newBio]
+            request.httpBody = try JSONEncoder().encode(body)
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            if let http = response as? HTTPURLResponse {
+                print("📥 updateBio status: \(http.statusCode)")
+                
+                if let responseString = String(data: data, encoding: .utf8) {
+                    print("📥 updateBio response: \(responseString)")
+                }
+                
+                if http.statusCode == 200 {
+                    print("✅ 自己紹介を更新しました")
+                    await MainActor.run {
+                        self.userBio = newBio
+                        self.userBios[userId] = newBio
+                    }
+                } else {
+                    print("⚠️ 自己紹介の更新に失敗しました:  \(http.statusCode)")
+                }
+            }
+        } catch {
+            print("❌ 通信エラー: \(error)")
+        }
+    }
+    
+    // 自己紹介取得
+    func fetchBio(userId: String) async -> String? {
+        // キャッシュがあれば返す
+        if let cached = userBios[userId] {
+            return cached
+        }
+        let url = usersApiEndpoint.appendingPathComponent(userId)
+        do {
+            var request = URLRequest(url: url)
+            if let idToken = await authViewModel.getValidIdToken() {
+                request.setValue(idToken, forHTTPHeaderField: "Authorization")
+            }
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                return nil
+            }
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let bio = json["bio"] as? String {
+                await MainActor.run {
+                    self.userBios[userId] = bio
+                    if userId == authViewModel.userSub {
+                        self.userBio = bio
+                    }
+                }
+                return bio
+            }
+        } catch {
+            print("自己紹介取得エラー: \(error)")
+        }
+        return nil
     }
     
     func fetchNotificationSettings() async {
@@ -843,7 +961,7 @@ class ProfileViewModel: ObservableObject {
         }
     }
     
-    // ★★★ 追加: 課金状態をサーバーに同期 ★★★
+    // 課金状態をサーバーに同期
     func syncPremiumStatus(isPremium: Bool) async {
         guard let userId = authViewModel.userSub, authViewModel.isSignedIn else { return }
         
@@ -871,7 +989,6 @@ class ProfileViewModel: ObservableObject {
     }
     
     func fetchNicknameAndImage(userId: String) async -> (nickname: String, imageUrl: String?) {
-        // ★★★ 修正: キャッシュがあっても、imageUrlがない場合はサーバーから取得し直す ★★★
         if let cachedNickname = userNicknames[userId],
            let cachedImageUrl = userProfileImages[userId] {
             return (cachedNickname, cachedImageUrl)
@@ -891,7 +1008,6 @@ class ProfileViewModel: ObservableObject {
             
             let (data, response) = try await URLSession.shared.data(for: request)
             
-            // ★★★ 追加: レスポンスのデバッグログ ★★★
             if let httpResponse = response as? HTTPURLResponse {
                 print("🔍 [fetchNicknameAndImage] Status: \(httpResponse.statusCode)")
             }
@@ -905,7 +1021,6 @@ class ProfileViewModel: ObservableObject {
             let nickname = profile.nickname ?? "（未設定）"
             let imageUrl = profile.profileImageUrl
             
-            // ★★★ 修正: MainActor. run を使用して確実に更新 ★★★
             await MainActor.run {
                 self.userNicknames[userId] = nickname
                 if let imageUrl = imageUrl {
@@ -924,6 +1039,43 @@ class ProfileViewModel: ObservableObject {
             }
             return ("不明", nil)
         }
+    }
+    
+    // ニックネーム、画像、自己紹介をまとめて取得
+    func fetchNicknameAndImageAndBio(userId: String) async -> (nickname: String, imageUrl: String?, bio: String?) {
+        let url = usersApiEndpoint.appendingPathComponent(userId)
+        do {
+            var request = URLRequest(url: url)
+            if let idToken = await authViewModel.getValidIdToken() {
+                request.setValue(idToken, forHTTPHeaderField: "Authorization")
+            }
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                return ("", nil, nil)
+            }
+            
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                let nickname = json["nickname"] as? String ?? ""
+                let imageUrl = json["profileImageUrl"] as? String
+                let bio = json["bio"] as? String
+                
+                await MainActor.run {
+                    self.userNicknames[userId] = nickname
+                    if let url = imageUrl {
+                        self.userProfileImages[userId] = url
+                    }
+                    self.userBios[userId] = bio ?? ""
+                    if userId == authViewModel.userSub {
+                        self.userBio = bio
+                    }
+                }
+                return (nickname, imageUrl, bio)
+            }
+        } catch {
+            print("プロフィール取得エラー: \(error)")
+        }
+        return ("", nil, nil)
     }
     
     private func requestNicknameFromAPI(userId: String) async -> String? {
@@ -1296,7 +1448,9 @@ class ProfileViewModel: ObservableObject {
         inFlightNicknameTasks = [:]
     }
 }
-// ★★★ 追加: UIImage の拡張機能 ★★★
+
+// MARK: - Extensions
+
 extension UIImage {
     func resized(toWidth width: CGFloat) -> UIImage? {
         let canvasSize = CGSize(width: width, height: CGFloat(ceil(width/size.width * size.height)))

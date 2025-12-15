@@ -9,17 +9,19 @@ struct BlockCheckResponse: Decodable {
 @MainActor
 class DMViewModel: ObservableObject {
 
-    // ★★★ 修正: [Thread] -> [DMThread] ★★★
     @Published var threads: [DMThread] = []
     @Published var messages: [Message] = []
     @Published var isLoading = false
+    
+    // エラーハンドリング用（NGワードチェック等で使用）
+    @Published var errorMessage: String = ""
+    @Published var showError: Bool = false
 
     // 既存エンドポイント
     private let dmsEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/dms")!
     private let threadsEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/threads")!
     // ブロック確認用エンドポイント
     private let usersApiEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/users")!
-
 
     // --- Auth 連携 (変更なし) ---
     private var authViewModel: AuthViewModel?
@@ -36,24 +38,24 @@ class DMViewModel: ObservableObject {
         return await authVM.getValidIdToken()
     }
     
-    // ★★★ 追加: 特定のユーザーとのスレッドを取得するメソッド ★★★
+    // 特定のユーザーとのスレッドを取得するメソッド
     func findDMThread(with targetUserId: String) async -> DMThread? {
-            guard let myId = authViewModel?.userSub else { return nil }
-            
-            // まだスレッド一覧がなければ取得
-            if threads.isEmpty {
-                await fetchThreads(userId: myId)
-            }
-            
-            // 相手が含まれるスレッドを探す
-            if let existing = threads.first(where: { $0.participants.contains(targetUserId) }) {
-                return existing
-            }
-            
-            // 念のため再取得して確認
+        guard let myId = authViewModel?.userSub else { return nil }
+        
+        // まだスレッド一覧がなければ取得
+        if threads.isEmpty {
             await fetchThreads(userId: myId)
-            return threads.first(where: { $0.participants.contains(targetUserId) })
         }
+        
+        // 相手が含まれるスレッドを探す
+        if let existing = threads.first(where: { $0.participants.contains(targetUserId) }) {
+            return existing
+        }
+        
+        // 念のため再取得して確認
+        await fetchThreads(userId: myId)
+        return threads.first(where: { $0.participants.contains(targetUserId) })
+    }
     
     // ブロック確認関数
     private func checkIfBlockedByTarget(targetId: String) async -> Bool? {
@@ -100,7 +102,6 @@ class DMViewModel: ObservableObject {
         }
     }
     
-
     // メッセージ一覧を取得: GET /threads/{threadId}/messages
     func fetchMessages(threadId: String) async {
         guard !threadId.isEmpty else { return }
@@ -175,7 +176,6 @@ class DMViewModel: ObservableObject {
                 return
             }
 
-            // ★★★ 修正: [DMThread] に変更 ★★★
             let decoded = try JSONDecoder().decode([DMThread].self, from: data)
             self.threads = decoded
             print("スレッド一覧の取得に成功。件数: \(decoded.count)")
@@ -193,16 +193,27 @@ class DMViewModel: ObservableObject {
         }
     }
 
-    // 既存: 会話内送信（現状は同エンドポイントを使用）
+    // 会話内送信（NGワードチェックを追加）
     func sendMessage(recipientId: String, senderId: String, questionTitle: String, messageText: String) async -> Bool {
-        // ★注意: 既存の会話内送信も「ブロック確認」が入るようになります。
+        
+        // 1. NGワードチェック
+        let trimmedText = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let result = NGWordFilter.shared.check(trimmedText)
+        
+        if case .blocked(let reason) = result {
+            self.errorMessage = reason
+            self.showError = true
+            return false
+        }
+        
+        // 2. ブロック確認と送信処理
         return await sendInitialDM(recipientId: recipientId, senderId: senderId, questionTitle: questionTitle, messageText: messageText)
     }
 
     // 最小レスポンス用（{ "threadId": "..." } に対応）
     struct MinimalThreadId: Codable { let threadId: String }
 
-    // ★★★ sendInitialDMAndReturnThread 関数 (戻り値を DMThread? に変更) ★★★
+    // sendInitialDMAndReturnThread 関数
     func sendInitialDMAndReturnThread(recipientId: String,
                                       senderId: String,
                                       questionTitle: String,
@@ -210,7 +221,7 @@ class DMViewModel: ObservableObject {
                                       voiceData: Data? = nil,
                                       duration: Double? = nil,
                                       imageData: Data? = nil
-    ) async -> DMThread? {  // ★★★ 修正: Thread -> DMThread ★★★
+    ) async -> DMThread? {
         guard let idToken = await getAuthToken() else {
             print("DM送信: 認証トークン取得失敗")
             return nil
@@ -273,7 +284,6 @@ class DMViewModel: ObservableObject {
             }
 
             // 1) APIが Thread 相当JSONを返す場合
-            // ★★★ 修正: DMThread でデコード ★★★
             if let t = try? JSONDecoder().decode(DMThread.self, from: data) {
                 print("DM送信に成功（ThreadデコードOK）。threadId=\(t.threadId)")
                 return t

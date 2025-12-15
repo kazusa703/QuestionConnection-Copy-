@@ -8,19 +8,23 @@ struct QuestionDetailView: View {
     
     @Environment(\.showAuthenticationSheet) private var showAuthenticationSheet
     
-    @State private var showingReportAlert = false
+    // アラート・シート管理
+    @State private var showReportSheet = false
     @State private var showingReportSuccessToast = false
     @State private var showingBlockAlert = false
     @State private var showingBlockSuccessToast = false
     @State private var showingUnblockSuccessToast = false
+    
+    // コピー完了トースト
+    @State private var showCopiedToast = false
+    
+    // アクション中フラグ
     @State private var isProcessingAction = false
 
     let question: Question
     @State private var hasAnswered: Bool? = nil
     @State private var shouldNavigateToQuiz = false
-    @State private var showCopiedToast = false
 
-    // (isBookmarked, isAuthorNotMe, isAuthorBlocked は変更なし)
     private var isBookmarked: Bool {
         profileViewModel.isBookmarked(questionId: question.id)
     }
@@ -33,9 +37,36 @@ struct QuestionDetailView: View {
         profileViewModel.isBlocked(userId: question.authorId)
     }
 
-    // --- contentBody (変更なし) ---
+    // --- contentBody ---
     private var contentBody: some View {
         VStack(alignment: .leading, spacing: 20) {
+            
+            // 出題者情報 (追加)
+            HStack {
+                // プロフィール画像
+                AsyncImage(url: URL(string: profileViewModel.userProfileImages[question.authorId] ?? "")) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    Image(systemName: "person.crop.circle.fill")
+                        .resizable()
+                        .foregroundColor(.gray)
+                }
+                .frame(width: 40, height: 40)
+                .clipShape(Circle())
+                
+                VStack(alignment: .leading) {
+                    Text(profileViewModel.getDisplayName(userId: question.authorId))
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    Text(formatDate(question.createdAt))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+            }
+            
+            Divider()
+            
             Text(question.title)
                 .font(.largeTitle)
                 .fontWeight(.bold)
@@ -110,17 +141,16 @@ struct QuestionDetailView: View {
             }
             .disabled(authViewModel.isSignedIn && (hasAnswered != false || quizViewModel.isLoading))
 
-        } // End VStack
+        }
     }
     
-    // --- body (ツールバーを修正) ---
+    // --- body ---
     var body: some View {
-        contentBody // ← 分割したVStackを呼び出す
+        contentBody
             .padding()
             .navigationTitle("質問詳細")
             .navigationBarTitleDisplayMode(.inline)
             
-            // --- ★★★ ツールバーを修正 ★★★ ---
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 12) {
@@ -130,19 +160,31 @@ struct QuestionDetailView: View {
                                 .foregroundColor(isBookmarked ? .orange : .gray)
                         }
                         
-                        // 2. 既存の通報・ブロックメニュー
+                        // 2. メニュー (通報・ブロック・シェアなど)
                         Menu {
-                            Button(role: .destructive) {
-                                if authViewModel.isSignedIn {
-                                    showingReportAlert = true
-                                } else {
-                                    showAuthenticationSheet.wrappedValue = true
-                                }
+                            // シェア
+                            Button {
+                                // シェア処理 (実装が必要ならここに記述)
                             } label: {
-                                Label("この質問を通報する", systemImage: "exclamationmark.bubble")
+                                Label("シェア", systemImage: "square.and.arrow.up")
                             }
                             
-                            if isAuthorNotMe { // 自分の質問でなければ
+                            Divider()
+                            
+                            // 自分の投稿でない場合のみ表示
+                            if isAuthorNotMe {
+                                // 通報 (ReportViewへ遷移)
+                                Button(role: .destructive) {
+                                    if authViewModel.isSignedIn {
+                                        showReportSheet = true
+                                    } else {
+                                        showAuthenticationSheet.wrappedValue = true
+                                    }
+                                } label: {
+                                    Label("この質問を通報する", systemImage: "exclamationmark.bubble")
+                                }
+                                
+                                // ブロック / ブロック解除
                                 Button(role: .destructive) {
                                     if isAuthorBlocked {
                                         Task {
@@ -173,15 +215,16 @@ struct QuestionDetailView: View {
                     }
                 }
             }
-            // --- ★★★ 修正ここまで ★★★ ---
-            
-            // (残りのモディファイアは変更なし)
             .onAppear {
                 quizViewModel.setAuthViewModel(authViewModel)
                 if authViewModel.isSignedIn {
                     checkAnswerStatus()
                 } else {
                     hasAnswered = false
+                }
+                // 出題者の情報を取得
+                Task {
+                    _ = await profileViewModel.fetchNicknameAndImage(userId: question.authorId)
                 }
             }
             .onChange(of: authViewModel.isSignedIn) { _, isSignedIn in
@@ -196,71 +239,23 @@ struct QuestionDetailView: View {
                     .environmentObject(authViewModel)
                     .environmentObject(profileViewModel)
             }
-            .overlay(alignment: .top) {
-                // (各種トースト ... 変更なし)
-                if showCopiedToast {
-                    Text("コピーしました")
-                        .font(.caption2)
-                        .padding(8)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(8)
-                        .transition(.opacity)
-                        .padding(.top, 8)
-                }
-                if showingReportSuccessToast {
-                    Text("通報が完了しました。")
-                        .font(.caption)
-                        .padding(10)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(8)
-                        .transition(.opacity)
-                        .padding(.top, 8)
-                }
-                if showingBlockSuccessToast {
-                    Text("ブロックしました。")
-                        .font(.caption)
-                        .padding(10)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(8)
-                        .transition(.opacity)
-                        .padding(.top, 8)
-                }
-                if showingUnblockSuccessToast {
-                    Text("ブロックを解除しました。")
-                        .font(.caption)
-                        .padding(10)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(8)
-                        .transition(.opacity)
-                        .padding(.top, 8)
-                }
-            }
-            // (各種アラート ... 変更なし)
-            .alert("通報の確認", isPresented: $showingReportAlert) {
-                Button("キャンセル", role: .cancel) { }
-                Button("通報する", role: .destructive) {
-                    Task {
-                        isProcessingAction = true
-                        let success = await profileViewModel.reportContent(
-                            targetId: question.questionId,
-                            targetType: "question",
-                            reason: "inappropriate",
-                            detail: "（ユーザーによる詳細報告なし）"
-                        )
-                        isProcessingAction = false
-                        if success {
-                            withAnimation { showingReportSuccessToast = true }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                                withAnimation { showingReportSuccessToast = false }
-                            }
-                        } else {
-                            // TODO: 失敗アラート
+            // ★★★ 通報シート ★★★
+            .sheet(isPresented: $showReportSheet) {
+                ReportView(
+                    targetType: .question,
+                    targetId: question.questionId,
+                    targetName: question.title
+                ) { success in
+                    if success {
+                        withAnimation { showingReportSuccessToast = true }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            withAnimation { showingReportSuccessToast = false }
                         }
                     }
                 }
-            } message: {
-                Text("「\(question.title)」を不適切なコンテンツとして通報しますか？")
+                .environmentObject(authViewModel)
             }
+            // ★★★ ブロック確認アラート ★★★
             .alert("ブロックの確認", isPresented: $showingBlockAlert) {
                 Button("キャンセル", role: .cancel) { }
                 Button("ブロックする", role: .destructive) {
@@ -273,17 +268,41 @@ struct QuestionDetailView: View {
                             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                                 withAnimation { showingBlockSuccessToast = false }
                             }
-                        } else {
-                            // TODO: 失敗アラート
                         }
                     }
                 }
             } message: {
                 Text("このユーザーをブロックしますか？\n（ブロックした相手からのDMが拒否されます）")
             }
+            // ★★★ オーバーレイ (トースト表示) ★★★
+            .overlay(alignment: .top) {
+                if showCopiedToast {
+                    Text("コピーしました")
+                        .font(.caption2)
+                        .padding(8)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(8)
+                        .transition(.opacity)
+                        .padding(.top, 8)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                Group {
+                    if showingReportSuccessToast {
+                        ToastView(message: "通報を受け付けました", icon: "checkmark.circle.fill")
+                    }
+                    if showingBlockSuccessToast {
+                        ToastView(message: "ブロックしました", icon: "hand.raised.slash.fill")
+                    }
+                    if showingUnblockSuccessToast {
+                        ToastView(message: "ブロックを解除しました", icon: "hand.thumbsup.fill")
+                    }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .animation(.easeInOut, value: showingReportSuccessToast || showingBlockSuccessToast || showingUnblockSuccessToast)
+            }
     } // End body
 
-    
     private var buttonBackgroundColor: Color {
         if authViewModel.isSignedIn && hasAnswered == true {
             return .gray
@@ -319,7 +338,6 @@ struct QuestionDetailView: View {
         }
     }
     
-    // --- ★★★ 追加：ブックマークトグル関数 ★★★ ---
     private func toggleBookmark() {
         guard authViewModel.isSignedIn else {
             showAuthenticationSheet.wrappedValue = true
@@ -334,5 +352,38 @@ struct QuestionDetailView: View {
             }
         }
     }
-    // --- ★★★ 追加完了 ★★★ ---
+    
+    private func formatDate(_ dateString: String) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: dateString) {
+            let displayFormatter = DateFormatter()
+            displayFormatter.locale = Locale(identifier: "ja_JP")
+            displayFormatter.dateStyle = .medium
+            displayFormatter.timeStyle = .none
+            return displayFormatter.string(from: date)
+        }
+        return dateString
+    }
+}
+
+// ★★★ トースト表示用View ★★★
+struct ToastView: View {
+    let message: String
+    let icon: String
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .foregroundColor(.green)
+            Text(message)
+                .font(.subheadline)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color(.systemBackground))
+        .cornerRadius(25)
+        .shadow(color: .black.opacity(0.15), radius: 10, y: 5)
+        .padding(.bottom, 30)
+    }
 }

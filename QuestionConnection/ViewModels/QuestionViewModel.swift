@@ -6,8 +6,7 @@ class QuestionViewModel: ObservableObject {
 
     @Published var questions: [Question] = []
     @Published var isLoading = false
-    
-    // 目的選択肢（拡張版）
+
     let availablePurposes: [String] = [
         "楽しむ",
         "学ぶ",
@@ -24,13 +23,12 @@ class QuestionViewModel: ObservableObject {
         return URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/questions")!
     }
 
-    // AuthViewModelを保持
     private var authViewModel: AuthViewModel?
 
     func setAuthViewModel(_ authViewModel: AuthViewModel) {
         self.authViewModel = authViewModel
     }
-    
+
     private func getAuthToken() async -> String? {
         guard let authVM = self.authViewModel else {
             print("QuestionViewModel: AuthViewModelが設定されていません。")
@@ -39,13 +37,12 @@ class QuestionViewModel: ObservableObject {
         return await authVM.getValidIdToken()
     }
 
-    // 一覧取得（目的・ブックマーク対応）
     func fetchQuestions(purpose: String? = nil, bookmarkedBy userId: String? = nil) async {
         isLoading = true
-        
+
         var urlComponents = URLComponents(url: apiEndpoint, resolvingAgainstBaseURL: true)
         var queryItems: [URLQueryItem] = []
-        
+
         if let purpose = purpose, !purpose.isEmpty {
             queryItems.append(URLQueryItem(name: "purpose", value: purpose))
         }
@@ -79,7 +76,6 @@ class QuestionViewModel: ObservableObject {
         isLoading = false
     }
 
-    // POST用DTO（サーバー生成項目は含めない）
     private struct CreateQuestionRequest: Codable {
         let title: String
         let purpose: String?
@@ -87,10 +83,51 @@ class QuestionViewModel: ObservableObject {
         let remarks: String
         let authorId: String
         let quizItems: [QuizItem]
-        let dmInviteMessage: String? // 追加
+        let dmInviteMessage: String?
     }
 
-    // 質問作成（dmInviteMessage を追加）
+    // NGワードチェック関数
+    func validateQuestionContent(title: String,
+                                  remarks: String,
+                                  dmInviteMessage: String?,
+                                  quizItems: [QuizItem]) -> (isValid: Bool, errorMessage: String?) {
+        var textsToCheck: [String] = []
+
+        textsToCheck.append(title)
+        textsToCheck.append(remarks)
+
+        if let msg = dmInviteMessage, !msg.isEmpty {
+            textsToCheck.append(msg)
+        }
+
+        for item in quizItems {
+            textsToCheck.append(item.questionText)
+
+            switch item.type {
+            case .choice:
+                for choice in item.choices {
+                    textsToCheck.append(choice.text)
+                }
+            case .fillIn:
+                for (_, answer) in item.fillInAnswers {
+                    textsToCheck.append(answer)
+                }
+            case .essay:
+                if let modelAnswer = item.modelAnswer {
+                    textsToCheck.append(modelAnswer)
+                }
+            }
+        }
+
+        let result = NGWordFilter.shared.checkMultiple(textsToCheck)
+
+        if case .blocked(let reason) = result {
+            return (false, reason)
+        }
+
+        return (true, nil)
+    }
+
     func createQuestion(title: String,
                         tags: [String],
                         remarks: String,
@@ -99,6 +136,20 @@ class QuestionViewModel: ObservableObject {
                         purpose: String,
                         dmInviteMessage: String? = nil) async -> Bool {
         isLoading = true
+
+        // NGワードチェック
+        let (isValid, errorMessage) = validateQuestionContent(
+            title: title,
+            remarks: remarks,
+            dmInviteMessage: dmInviteMessage,
+            quizItems: quizItems
+        )
+
+        if !isValid {
+            print("NGワードチェック結果: \(errorMessage ?? "不明なエラー")")
+            isLoading = false
+            return false
+        }
 
         guard let idToken = await getAuthToken() else {
             print("質問作成: 認証トークン取得失敗")
@@ -140,5 +191,46 @@ class QuestionViewModel: ObservableObject {
             isLoading = false
             return false
         }
+    }
+}
+
+// MARK: - NGWordFilter（シングルトン）
+
+class NGWordFilter {
+    static let shared = NGWordFilter()
+
+    private let ngWords: [String] = [
+        // 暴力的な内容
+        "殺す", "殺害", "爆弾", "テロ",
+        // 差別的な言葉
+        "差別", "偏見",
+        // その他の禁止ワード
+        // 必要に応じて追加
+    ]
+
+    private init() {}
+
+    enum CheckResult {
+        case allowed
+        case blocked(String)
+    }
+
+    func check(_ text: String) -> CheckResult {
+        let lowerText = text.lowercased()
+        for ngWord in ngWords {
+            if lowerText.contains(ngWord.lowercased()) {
+                return .blocked("不適切な表現が含まれています: '\(ngWord)'")
+            }
+        }
+        return .allowed
+    }
+
+    func checkMultiple(_ texts: [String]) -> CheckResult {
+        for text in texts {
+            if case .blocked(let reason) = check(text) {
+                return .blocked(reason)
+            }
+        }
+        return .allowed
     }
 }

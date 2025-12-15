@@ -58,7 +58,7 @@ struct ProfileView: View {
                     .environmentObject(viewModel)
             }
             .sheet(isPresented: $showEditProfile) {
-                SetNicknameView()
+                EditProfileView()
                     .environmentObject(authViewModel)
                     .environmentObject(viewModel)
             }
@@ -331,7 +331,7 @@ struct ProfileView: View {
     }
     
     // MARK: - Created Questions Section
-    
+
     private var createdQuestionsSection: some View {
         Group {
             if isMyProfile {
@@ -346,20 +346,35 @@ struct ProfileView: View {
                         
                         Text("自分が作成した質問")
                             .font(.headline)
-                            .foregroundColor(.primary)
+                            .foregroundColor(. primary)
                         
                         Spacer()
                         
-                        if !viewModel.myQuestions.isEmpty {
-                            Text("\(viewModel.myQuestions.count)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .padding(6)
-                                .background(Color.gray.opacity(0.2))
+                        // ★★★ 追加:  未採点数の合計を表示（赤いバッジ）★★★
+                        let totalPendingCount = viewModel.myQuestions.reduce(0) { sum, question in
+                            sum + (question.pendingCount ??  0)
+                        }
+                        if totalPendingCount > 0 {
+                            Text("\(totalPendingCount)")
+                                .font(.caption2)
+                                .fontWeight(. bold)
+                                .foregroundColor(.white)
+                                . padding(6)
+                                . background(Color.red)
                                 .clipShape(Circle())
                         }
                         
-                        Image(systemName: "chevron.right")
+                        // 問題数（グレーのバッジ）
+                        if !viewModel.myQuestions.isEmpty {
+                            Text("\(viewModel.myQuestions.count)")
+                                .font(. caption)
+                                .foregroundColor(.secondary)
+                                . padding(6)
+                                . background(Color.gray.opacity(0.2))
+                                . clipShape(Circle())
+                        }
+                        
+                        Image(systemName: "chevron. right")
                             .foregroundColor(.gray)
                     }
                     .padding()
@@ -391,7 +406,7 @@ struct ProfileView: View {
                     label: {
                         HStack {
                             Image(systemName: "questionmark.folder")
-                                .foregroundColor(.accentColor)
+                                . foregroundColor(.accentColor)
                             Text("作成した質問")
                                 .font(.headline)
                                 .foregroundColor(.primary)

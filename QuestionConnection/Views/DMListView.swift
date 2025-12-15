@@ -6,31 +6,25 @@ struct DMListView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
     @Environment(\.showAuthenticationSheet) private var showAuthenticationSheet
     @EnvironmentObject private var profileViewModel: ProfileViewModel
-
-    // 課金管理
     @EnvironmentObject private var subscriptionManager: SubscriptionManager
 
     @State private var searchText = ""
     @State private var isInitialFetchDone = false
-
     @State private var selectedTab: DMTab = .all
-
     @State private var favoriteThreadIds: Set<String> = []
-
-    // 削除されたスレッド + 削除時刻を記録
     @State private var deletedThreads: [String: Date] = [:]
-
-    // 最後のメッセージとその日付をキャッシュ
     @State private var lastMessageCache: [String: (text: String, date: Date)] = [:]
-
-    // 表示名変更用のアラート制御
     @State private var showingEditNameAlert = false
     @State private var editingThreadId: String? = nil
     @State private var editingPartnerId: String? = nil
     @State private var newNicknameInput = ""
-
-    // 未送信リスト表示フラグ
     @State private var showPendingDMList = false
+
+    // 自己紹介表示用
+    @State private var selectedOpponentId: String? = nil
+    @State private var showBioSheet = false
+    @State private var selectedOpponentBio: String? = nil
+    @State private var isLoadingBio = false
 
     enum DMTab {
         case all
@@ -109,7 +103,6 @@ struct DMListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // バナー広告
             if !subscriptionManager.isPremium {
                 AdBannerView()
                     .frame(height: 50)
@@ -177,6 +170,9 @@ struct DMListView: View {
             PendingDMListView()
                 .environmentObject(authViewModel)
                 .environmentObject(profileViewModel)
+        }
+        .sheet(isPresented: $showBioSheet) {
+            bioSheetContent
         }
         .searchable(text: $searchText, prompt: "タイトル、ニックネームで検索")
         .onAppear {
@@ -259,7 +255,6 @@ struct DMListView: View {
             } else {
                 List(filteredThreads) { thread in
                     ZStack(alignment: .leading) {
-                        // 1. 中身
                         DMListRowView(
                             thread: thread,
                             profileViewModel: profileViewModel,
@@ -268,7 +263,6 @@ struct DMListView: View {
                         )
                         .environmentObject(authViewModel)
 
-                        // 2. 透明なリンク
                         NavigationLink(
                             destination: ConversationView(thread: thread, viewModel: dmViewModel)
                                 .environmentObject(authViewModel)
@@ -279,8 +273,30 @@ struct DMListView: View {
                         .opacity(0)
                     }
                     .contentShape(Rectangle())
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button {
+                            if let myUserId = authViewModel.userSub,
+                               let opponentId = thread.participants.first(where: { $0 != myUserId }) {
+                                selectedOpponentId = opponentId
+                                showBioSheet = true
+                            }
+                        } label: {
+                            Label("自己紹介", systemImage: "person.text.rectangle")
+                        }
+                        .tint(.blue)
+
+                        Button(action: {
+                            toggleFavorite(threadId: thread.threadId)
+                        }) {
+                            if favoriteThreadIds.contains(thread.threadId) {
+                                Label("お気に入りから削除", systemImage: "star.fill")
+                            } else {
+                                Label("お気に入りに移動", systemImage: "star")
+                            }
+                        }
+                        .tint(.orange)
+                    }
                     .contextMenu {
-                        // 1. お気に入りボタン
                         Button(action: {
                             toggleFavorite(threadId: thread.threadId)
                         }) {
@@ -291,7 +307,6 @@ struct DMListView: View {
                             }
                         }
 
-                        // 表示名を変更ボタン
                         if let opponentId = thread.participants.first(where: { $0 != authViewModel.userSub }) {
                             Button(action: {
                                 editingPartnerId = opponentId
@@ -303,7 +318,6 @@ struct DMListView: View {
                             }
                         }
 
-                        // 3. 削除ボタン
                         Button(role: .destructive, action: {
                             deleteThread(threadId: thread.threadId)
                         }) {
@@ -311,7 +325,6 @@ struct DMListView: View {
                         }
                     }
                 }
-                // 入力用アラート
                 .alert("表示名を変更", isPresented: $showingEditNameAlert) {
                     TextField("新しい名前を入力", text: $newNicknameInput)
                     Button("キャンセル", role: .cancel) {
@@ -330,6 +343,51 @@ struct DMListView: View {
                 }
             }
         }
+    }
+
+    private var bioSheetContent: some View {
+        VStack(spacing: 16) {
+            HStack {
+                Text("自己紹介")
+                    .font(.headline)
+                Spacer()
+                Button("閉じる") {
+                    showBioSheet = false
+                }
+            }
+            .padding()
+
+            if isLoadingBio {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+            } else if let bio = selectedOpponentBio, !bio.isEmpty {
+                Text(bio)
+                    .font(.body)
+                    .foregroundColor(.primary)
+                    .padding()
+            } else {
+                Text("自己紹介はありません")
+                    .font(.body)
+                    .foregroundColor(.gray)
+                    .italic()
+                    .padding()
+            }
+
+            Spacer()
+        }
+        .presentationDetents([.medium, .large])
+        .onAppear {
+            Task {
+                await loadBio()
+            }
+        }
+    }
+
+    private func loadBio() async {
+        guard let opponentId = selectedOpponentId else { return }
+        isLoadingBio = true
+        selectedOpponentBio = await profileViewModel.fetchBio(userId: opponentId)
+        isLoadingBio = false
     }
 
     private var guestView: some View {
