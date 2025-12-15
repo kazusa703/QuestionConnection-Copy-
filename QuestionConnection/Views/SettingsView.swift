@@ -66,11 +66,10 @@ struct SettingsView: View {
                     }
             }
 
-            // (アカウント操作セクション)
             Section(header: Text("アカウント操作")) {
                 Button(role: .destructive) {
                     authViewModel.signOut()
-                    dismiss()
+                    // dismiss() は削除
                 } label: {
                     HStack {
                         Spacer()
