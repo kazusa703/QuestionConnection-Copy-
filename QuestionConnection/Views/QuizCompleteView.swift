@@ -69,6 +69,10 @@ struct QuizCompleteView: View {
                 Button(action: {
                     dismiss()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        // ★★★ 追加: 掲示板タブ(0)もルートに戻す ★★★
+                        navManager.popToRoot(tab: 0)
+                        
+                        // プロフィールタブに移動
                         navManager.popToRoot(tab: 3)
                         navManager.tabSelection = 3
                     }

@@ -202,12 +202,6 @@ struct CreateQuestionView: View {
             return false
         }
         
-        if purpose.isEmpty {
-            alertMessage = "目的が選択されていません。"
-            showAlert = true
-            return false
-        }
-        
         for (index, item) in quizItems.enumerated() {
             let qNum = index + 1
             

@@ -1,12 +1,9 @@
 import SwiftUI
-import UIKit
 
 /// 設定画面に表示する「ユーザー情報」セクション
-/// - メール: IDトークンの email クレームから取得
-/// - ニックネーム: ProfileViewModel の fetchNickname を使用（キャッシュ対応前提）
 struct AccountInfoSection: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
-    @EnvironmentObject private var profileViewModel: ProfileViewModel
+    @EnvironmentObject private var profileViewModel:  ProfileViewModel
 
     @State private var email: String = "読み込み中..."
     @State private var nickname: String = "読み込み中..."
@@ -19,7 +16,7 @@ struct AccountInfoSection: View {
                 Text(email)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
-                    .contextMenu {
+                    . contextMenu {
                         Button("コピー") { UIPasteboard.general.string = email }
                     }
             }
@@ -34,12 +31,16 @@ struct AccountInfoSection: View {
                     }
             }
         }
+        .onAppear {
+            loadUserInfoSync()
+        }
         .task {
-            await loadUserInfo()
+            await loadNicknameAsync()
         }
         .onChange(of: authViewModel.isSignedIn) { _, signedIn in
             if signedIn {
-                Task { await loadUserInfo() }
+                loadUserInfoSync()
+                Task { await loadNicknameAsync() }
             } else {
                 email = "-"
                 nickname = "-"
@@ -49,55 +50,51 @@ struct AccountInfoSection: View {
 
     // MARK: - Helpers
 
-    private func loadUserInfo() async {
+    /// 同期的に取得できる情報（メール）
+    private func loadUserInfoSync() {
         guard authViewModel.isSignedIn else {
             email = "-"
             nickname = "-"
             return
         }
-
-        // ニックネーム
-        if let myUserId = authViewModel.userSub {
-            if let cached = profileViewModel.userNicknames[myUserId] {
-                nickname = cached.isEmpty ? "（未設定）" : cached
-            } else {
-                let name = await profileViewModel.fetchNickname(userId: myUserId)
-                nickname = name.isEmpty ? "（未設定）" : name
-            }
-        } else {
-            nickname = "-"
-        }
-
-        // メール（IDトークンから email クレームを抽出）
-        if let token = await authViewModel.getValidIdToken(),
-           let mail = extractEmail(fromIDToken: token) {
-            email = mail
+        
+        // メールは authViewModel から直接取得（APIコール不要）
+        if let userEmail = authViewModel.userEmail {
+            email = userEmail
         } else {
             email = "-"
         }
     }
-
-    private func extractEmail(fromIDToken token: String) -> String? {
-        // JWT のペイロード部分（中央）を Base64URL デコードして email を取り出す
-        let parts = token.split(separator: ".")
-        guard parts.count >= 2 else { return nil }
-        let payloadB64 = String(parts[1])
-        guard let data = Data(base64URLEncoded: payloadB64) else { return nil }
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return json["email"] as? String
-    }
-}
-
-private extension Data {
-    // Base64URL デコード（= と / + の差異を吸収）
-    init?(base64URLEncoded input: String) {
-        var s = input.replacingOccurrences(of: "-", with: "+")
-                      .replacingOccurrences(of: "_", with: "/")
-        let rem = s.count % 4
-        if rem > 0 {
-            s.append(String(repeating: "=", count: 4 - rem))
+    
+    /// 非同期で取得する情報（ニックネーム）
+    private func loadNicknameAsync() async {
+        // ★ サインイン状態を再確認
+        guard authViewModel.isSignedIn else {
+            await MainActor.run {
+                nickname = "-"
+            }
+            return
         }
-        guard let d = Data(base64Encoded: s) else { return nil }
-        self = d
+        
+        guard let myUserId = authViewModel.userSub else {
+            await MainActor.run {
+                nickname = "-"
+            }
+            return
+        }
+        
+        // キャッシュから取得
+        if let cached = profileViewModel.userNicknames[myUserId], !cached.isEmpty {
+            await MainActor.run {
+                nickname = cached
+            }
+            return
+        }
+        
+        // APIから取得
+        let name = await profileViewModel.fetchNickname(userId: myUserId)
+        await MainActor.run {
+            nickname = name.isEmpty ? "（未設定）" : name
+        }
     }
 }

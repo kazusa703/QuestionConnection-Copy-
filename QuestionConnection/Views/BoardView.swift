@@ -15,8 +15,9 @@ struct BoardView: View {
     @State private var selectedTags: [String] = []
     @State private var tagInput: String = ""
 
-    // メインの検索テキスト（フィルターシート内に移動）
-    @State private var searchText = ""
+    // ★★★ 変更: キーワード検索 → タイトル検索 + 問題番号検索 ★★★
+    @State private var searchTitle = ""
+    @State private var searchQuestionId = ""
     
     // 並び替えオプション
     @State private var sortOption: SortOption = .newest
@@ -34,44 +35,48 @@ struct BoardView: View {
     private var filteredPool: [Question] {
         var result = viewModel.questions
         
-        // ★★★ 追加: 自分の投稿を除外する処理 ★★★
+        // 自分の投稿を除外する処理
         if let currentUserId = authViewModel.userSub {
             result = result.filter { $0.authorId != currentUserId }
         }
-        // ------------------------------------------
         
-        // 1. テキスト検索 (タイトル / タグ / 問題番号)
-        if !searchText.isEmpty {
-            let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        // ★★★ 変更: タイトル検索 ★★★
+        if !searchTitle.isEmpty {
+            let keyword = searchTitle.trimmingCharacters(in: .whitespacesAndNewlines)
             result = result.filter { question in
-                let titleMatch = question.title.localizedCaseInsensitiveContains(keyword)
-                let tagMatch = question.tags.contains { $0.localizedCaseInsensitiveContains(keyword) }
-                let code = question.shareCode ?? ""
-                let codeMatch = code.localizedCaseInsensitiveContains(keyword)
-                let idMatch = question.id.localizedCaseInsensitiveContains(keyword) || question.questionId.localizedCaseInsensitiveContains(keyword)
-                
-                return titleMatch || tagMatch || codeMatch || idMatch
+                question.title.localizedCaseInsensitiveContains(keyword)
             }
         }
         
-        // 2. ブロックユーザーの除外
+        // ★★★ 変更: 問題番号検索 ★★★
+        if !searchQuestionId.isEmpty {
+            let keyword = searchQuestionId.trimmingCharacters(in: .whitespacesAndNewlines)
+            result = result.filter { question in
+                let code = question.shareCode ?? ""
+                let codeMatch = code.localizedCaseInsensitiveContains(keyword)
+                let idMatch = question.id.localizedCaseInsensitiveContains(keyword) || question.questionId.localizedCaseInsensitiveContains(keyword)
+                return codeMatch || idMatch
+            }
+        }
+        
+        // ブロックユーザーの除外
         if authViewModel.isSignedIn {
             result = result.filter { question in
                 !profileViewModel.isBlocked(userId: question.authorId)
             }
         }
         
-        // 3. 目的でフィルタ
+        // 目的でフィルタ
         if !selectedPurpose.isEmpty {
             result = result.filter { $0.purpose == selectedPurpose }
         }
         
-        // 4. ブックマークでフィルタ
+        // ブックマークでフィルタ
         if showingOnlyBookmarks && authViewModel.isSignedIn {
             result = result.filter { profileViewModel.isBookmarked(questionId: $0.id) }
         }
         
-        // 5. 指定タグでフィルタ (AND検索)
+        // 指定タグでフィルタ (AND検索)
         if !selectedTags.isEmpty {
             result = result.filter { question in
                 selectedTags.allSatisfy { selectedTag in
@@ -96,6 +101,11 @@ struct BoardView: View {
             return randomQuestions
         }
     }
+    
+    // ★★★ 追加: フィルターが適用されているかどうか ★★★
+    private var hasActiveFilters: Bool {
+        !searchTitle.isEmpty || !searchQuestionId.isEmpty || !selectedPurpose.isEmpty || !selectedTags.isEmpty
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -107,11 +117,12 @@ struct BoardView: View {
             }
             
             // --- 適用中のフィルタ（バッジ）表示 ---
-            if !searchText.isEmpty || !selectedPurpose.isEmpty || showingOnlyBookmarks || !selectedTags.isEmpty {
+            if hasActiveFilters || showingOnlyBookmarks {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         Button {
-                            searchText = ""
+                            searchTitle = ""
+                            searchQuestionId = ""
                             selectedPurpose = ""
                             showingOnlyBookmarks = false
                             selectedTags.removeAll()
@@ -123,11 +134,20 @@ struct BoardView: View {
                                 .cornerRadius(8)
                         }
                         
-                        if !searchText.isEmpty {
-                            FilterBadge(text: "🔍 \(searchText)") {
-                                searchText = ""
+                        // ★★★ 変更: タイトル検索バッジ ★★★
+                        if !searchTitle.isEmpty {
+                            FilterBadge(text: "📝 \(searchTitle)") {
+                                searchTitle = ""
                             }
                         }
+                        
+                        // ★★★ 追加: 問題番号検索バッジ ★★★
+                        if !searchQuestionId.isEmpty {
+                            FilterBadge(text: "🔢 \(searchQuestionId)") {
+                                searchQuestionId = ""
+                            }
+                        }
+                        
                         if !selectedPurpose.isEmpty {
                             FilterBadge(text: "目的: \(selectedPurpose)")
                         }
@@ -271,20 +291,30 @@ struct BoardView: View {
                     Button {
                         showingFilterSheet = true
                     } label: {
-                        Image(systemName: (!searchText.isEmpty || !selectedPurpose.isEmpty || !selectedTags.isEmpty) ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                        Image(systemName: hasActiveFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                             .padding(8)
                     }
                 }
             }
         }
+        // ★★★ 変更: フィルターシート ★★★
         .sheet(isPresented: $showingFilterSheet) {
             NavigationStack {
                 Form {
-                    Section(header: Text("キーワード検索")) {
-                        TextField("タイトル・タグ・問題番号で検索", text: $searchText)
+                    // タイトルで検索
+                    Section(header: Text("タイトルで検索")) {
+                        TextField("タイトルを入力", text: $searchTitle)
                             .textFieldStyle(.roundedBorder)
                     }
                     
+                    // 問題番号で検索
+                    Section(header: Text("問題番号で検索")) {
+                        TextField("問題番号を入力 (例: 12345)", text: $searchQuestionId)
+                            .textFieldStyle(.roundedBorder)
+                            .keyboardType(.asciiCapable)
+                    }
+                    
+                    // 目的で絞り込む
                     Section(header: Text("目的で絞り込む")) {
                         Picker("目的", selection: $selectedPurpose) {
                             Text("指定なし").tag("")
@@ -294,6 +324,7 @@ struct BoardView: View {
                         }
                     }
                     
+                    // タグで絞り込む
                     Section(header: Text("タグで絞り込む (AND検索)")) {
                         HStack {
                             TextField("タグを入力 (例: swift)", text: $tagInput)
@@ -344,9 +375,11 @@ struct BoardView: View {
                         }
                     }
                     
+                    // リセットボタン
                     Section {
                         Button(role: .destructive) {
-                            searchText = ""
+                            searchTitle = ""
+                            searchQuestionId = ""
                             selectedPurpose = ""
                             selectedTags.removeAll()
                             tagInput = ""
@@ -379,7 +412,9 @@ struct BoardView: View {
                 reshuffleRandomQuestions()
             }
         }
-        .onChange(of: searchText) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
+        // ★★★ 変更: onChange ★★★
+        .onChange(of: searchTitle) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
+        .onChange(of: searchQuestionId) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
         .onChange(of: selectedPurpose) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
         .onChange(of: showingOnlyBookmarks) { _ in if sortOption == .random { reshuffleRandomQuestions() } }
         .onChange(of: selectedTags) { _ in if sortOption == .random { reshuffleRandomQuestions() } }

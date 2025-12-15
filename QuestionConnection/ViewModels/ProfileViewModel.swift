@@ -587,7 +587,7 @@ class ProfileViewModel: ObservableObject {
         isLoadingSettings = false
     }
     
-    // ニックネーム更新
+    // ニックネーム更新 (NGワードチェック付き)
     func updateNickname(userId: String) async {
         guard !userId.isEmpty else { return }
         guard let idToken = await authViewModel.getValidIdToken() else {
@@ -634,7 +634,7 @@ class ProfileViewModel: ObservableObject {
         isNicknameLoading = false
     }
     
-    // 自己紹介更新
+    // 自己紹介更新 (NGワードチェック付き)
     func updateBio(userId: String, newBio: String) async {
         guard authViewModel.isSignedIn else {
             print("❌ updateBio: 未ログイン")

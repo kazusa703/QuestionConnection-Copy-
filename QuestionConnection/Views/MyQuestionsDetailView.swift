@@ -6,12 +6,18 @@ struct MyQuestionsDetailView: View {
     @ObservedObject var viewModel: ProfileViewModel
     @EnvironmentObject private var authViewModel: AuthViewModel
     
-    // ★ 追加: タブ選択状態
-    @State private var selectedTab = "essay" // "essay" (記述式あり), "choice" (選択/穴埋めのみ)
+    // タブ選択状態
+    @State private var selectedTab = "essay"
+    
+    // ★★★ 追加: 削除用のState ★★★
+    @State private var questionToDelete: Question?
+    @State private var showDeleteConfirmation = false
+    @State private var showDeleteSuccess = false
+    @State private var isDeleting = false
     
     var body: some View {
         VStack(spacing: 0) {
-            // ★ 追加: 切り替えタブ (Picker)
+            // 切り替えタブ (Picker)
             Picker("Filter", selection: $selectedTab) {
                 Text("記述式を含む").tag("essay")
                 Text("選択・穴埋め").tag("choice")
@@ -46,46 +52,99 @@ struct MyQuestionsDetailView: View {
                             .padding(.top, 20)
                     } else {
                         ForEach(filteredQuestions, id: \.questionId) { question in
-                            // ★ タブによって遷移先を分岐
+                            // タブによって遷移先を分岐
                             if selectedTab == "essay" {
-                                // A. 記述式を含む -> 採点・管理画面 (AnswerManagementView) へ
                                 NavigationLink(destination: AnswerManagementView(question: question).environmentObject(viewModel)) {
                                     QuestionRowView(question: question)
                                 }
+                                // ★★★ 追加: 長押しメニュー ★★★
+                                .contextMenu {
+                                    Button(role: .destructive) {
+                                        questionToDelete = question
+                                        showDeleteConfirmation = true
+                                    } label: {
+                                        Label("削除", systemImage: "trash")
+                                    }
+                                }
                             } else {
-                                // B. 選択・穴埋めのみ -> 分析・詳細画面 (QuestionAnalyticsView) へ
                                 NavigationLink(destination: QuestionAnalyticsView(question: question)
                                     .environmentObject(viewModel)
                                     .environmentObject(authViewModel)
                                 ) {
                                     QuestionRowView(question: question)
                                 }
+                                // ★★★ 追加: 長押しメニュー ★★★
+                                .contextMenu {
+                                    Button(role: .destructive) {
+                                        questionToDelete = question
+                                        showDeleteConfirmation = true
+                                    } label: {
+                                        Label("削除", systemImage: "trash")
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
-            .listStyle(.plain) // スタイルを維持
+            .listStyle(.plain)
         }
         .navigationTitle("作成した問題")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.visible, for: .navigationBar)
+        // ★★★ 追加: 削除確認アラート ★★★
+        .alert("本当に削除しますか？", isPresented: $showDeleteConfirmation) {
+            Button("キャンセル", role: .cancel) {
+                questionToDelete = nil
+            }
+            Button("削除", role: .destructive) {
+                Task {
+                    await deleteQuestion()
+                }
+            }
+        } message: {
+            if let question = questionToDelete {
+                Text("「\(question.title)」を削除します。この操作は取り消せません。")
+            }
+        }
+        // ★★★ 追加: 削除完了アラート ★★★
+        .alert("削除完了", isPresented: $showDeleteSuccess) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("問題を削除しました。")
+        }
+        // ★★★ 追加: 削除中のオーバーレイ ★★★
+        .overlay {
+            if isDeleting {
+                Color.black.opacity(0.3)
+                    .ignoresSafeArea()
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .scaleEffect(1.2)
+                    Text("削除中...")
+                        .font(.subheadline)
+                }
+                .padding(24)
+                .background(Color(.systemBackground))
+                .cornerRadius(12)
+                .shadow(radius: 10)
+            }
+        }
     }
-}
-
-#Preview {
-    let authVM = AuthViewModel()
-    let profileVM = ProfileViewModel(authViewModel: authVM)
     
-    return NavigationStack {
-        MyQuestionsDetailView(
-            questions: [
-                Question(questionId: "1", title: "記述式ありの質問", purpose: "test", tags: [], remarks: "", authorId: "me", quizItems: [QuizItem(id: "q1", type: .essay, questionText: "")], createdAt: "", dmInviteMessage: nil, shareCode: nil, answerCount: 5, pendingCount: 2),
-                Question(questionId: "2", title: "選択式の質問", purpose: "test", tags: [], remarks: "", authorId: "me", quizItems: [QuizItem(id: "q2", type: .choice, questionText: "")], createdAt: "", dmInviteMessage: nil, shareCode: nil, answerCount: 10, pendingCount: 0)
-            ],
-            isLoadingMyQuestions: false,
-            viewModel: profileVM
-        )
-        .environmentObject(authVM)
+    // ★★★ 追加: 削除処理 ★★★
+    private func deleteQuestion() async {
+        guard let question = questionToDelete else { return }
+        
+        isDeleting = true
+        
+        let success = await viewModel.deleteQuestion(questionId: question.questionId)
+        
+        isDeleting = false
+        questionToDelete = nil
+        
+        if success {
+            showDeleteSuccess = true
+        }
     }
 }
