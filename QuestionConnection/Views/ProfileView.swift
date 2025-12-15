@@ -49,6 +49,13 @@ struct ProfileView: View {
                     await viewModel.fetchMyQuestions(authorId: userId)
                     if isMyProfile {
                         await viewModel.fetchMyGradedAnswers()
+                        // 自分が作成した質問に対する回答ログ（採点用）も取得する必要がある場合はここで取得
+                        // 現状のViewModelには全質問の回答ログを一括取得するメソッドがないため、
+                        // 必要に応じて個別に取得するか、APIを拡張する必要があります。
+                        // ここでは簡易的に、myQuestionsの各質問に対して取得するループを回す例を示します。
+                        for question in viewModel.myQuestions {
+                            await viewModel.fetchAnswerLogs(questionId: question.questionId)
+                        }
                     }
                 }
             }
@@ -108,14 +115,14 @@ struct ProfileView: View {
             VStack(spacing: 20) {
                 profileHeader
                 actionButtons
-                
+              
                 Divider()
-                
+              
                 if isMyProfile {
                     gradedAnswersSection
                     Divider()
                 }
-                
+              
                 createdQuestionsSection
                 Divider()
             }
@@ -159,7 +166,7 @@ struct ProfileView: View {
                 Text(viewModel.getDisplayName(userId: userId))
                     .font(.title2)
                     .fontWeight(.bold)
-                
+              
                 // 自分以外のプロフィールなら、編集ボタンを表示
                 if !isMyProfile {
                     Button {
@@ -291,13 +298,13 @@ struct ProfileView: View {
             HStack {
                 Image(systemName: "pencil.and.list.clipboard")
                     .foregroundColor(.accentColor)
-                
+              
                 Text("記述式問題の結果")
                     .font(.headline)
                     .foregroundColor(.primary)
-                
+              
                 Spacer()
-                
+              
                 // バッジ（採点待ち数）
                 let pendingCount = viewModel.myGradedAnswers.filter { $0.status == "pending_review" }.count
                 if pendingCount > 0 {
@@ -309,7 +316,7 @@ struct ProfileView: View {
                         .background(Color.orange)
                         .clipShape(Circle())
                 }
-                
+              
                 // バッジ（総数）
                 if !viewModel.myGradedAnswers.isEmpty {
                     Text("\(viewModel.myGradedAnswers.count)")
@@ -319,7 +326,7 @@ struct ProfileView: View {
                         .background(Color.gray.opacity(0.2))
                         .clipShape(Circle())
                 }
-                
+              
                 Image(systemName: "chevron.right")
                     .foregroundColor(.gray)
             }
@@ -346,41 +353,47 @@ struct ProfileView: View {
                         
                         Text("自分が作成した質問")
                             .font(.headline)
-                            .foregroundColor(. primary)
+                            .foregroundColor(.primary)
                         
                         Spacer()
                         
-                        // ★★★ 追加:  未採点数の合計を表示（赤いバッジ）★★★
-                        let totalPendingCount = viewModel.myQuestions.reduce(0) { sum, question in
-                            sum + (question.pendingCount ??  0)
-                        }
+                        // ★★★ 修正: answerLogs から計算 ★★★
+                        // viewModel.answerLogs は「現在表示中の質問」の回答ログしか持っていない可能性があるため
+                        // 本来は全ての回答ログを集計するか、MyQuestionsDetailView側で計算すべきですが、
+                        // ここではViewModelにある情報を使って計算します。
+                        let totalPendingCount = viewModel.answerLogs.filter { log in
+                            log.status == "pending_review" &&
+                            viewModel.myQuestions.contains { $0.questionId == log.questionId }
+                        }.count
+                        
                         if totalPendingCount > 0 {
                             Text("\(totalPendingCount)")
                                 .font(.caption2)
-                                .fontWeight(. bold)
+                                .fontWeight(.bold)
                                 .foregroundColor(.white)
-                                . padding(6)
-                                . background(Color.red)
+                                .padding(6)
+                                .background(Color.red)
                                 .clipShape(Circle())
                         }
                         
                         // 問題数（グレーのバッジ）
                         if !viewModel.myQuestions.isEmpty {
                             Text("\(viewModel.myQuestions.count)")
-                                .font(. caption)
+                                .font(.caption)
                                 .foregroundColor(.secondary)
-                                . padding(6)
-                                . background(Color.gray.opacity(0.2))
-                                . clipShape(Circle())
+                                .padding(6)
+                                .background(Color.gray.opacity(0.2))
+                                .clipShape(Circle())
                         }
                         
-                        Image(systemName: "chevron. right")
+                        Image(systemName: "chevron.right")
                             .foregroundColor(.gray)
                     }
                     .padding()
                     .background(Color(UIColor.secondarySystemBackground))
                     .cornerRadius(10)
                 }
+                .padding(.horizontal)
             } else {
                 DisclosureGroup(
                     isExpanded: $isCreatedQuestionsExpanded,
@@ -395,7 +408,7 @@ struct ProfileView: View {
                             LazyVStack {
                                 ForEach(viewModel.myQuestions) { question in
                                     NavigationLink(destination: QuestionDetailView(question: question)) {
-                                        QuestionRowView(question: question)
+                                        QuestionRowView(question: question, answerLogs: viewModel.answerLogs)
                                     }
                                     .buttonStyle(PlainButtonStyle())
                                     Divider()
@@ -406,7 +419,7 @@ struct ProfileView: View {
                     label: {
                         HStack {
                             Image(systemName: "questionmark.folder")
-                                . foregroundColor(.accentColor)
+                                .foregroundColor(.accentColor)
                             Text("作成した質問")
                                 .font(.headline)
                                 .foregroundColor(.primary)
@@ -525,6 +538,9 @@ struct GradedAnswerRow: View {
 
 struct QuestionRowView: View {
     let question: Question
+    // ★★★ 修正: answerLogs を受け取り、デフォルトは空配列 ★★★
+    var answerLogs: [AnswerLogItem] = []
+    
     var body: some View {
         HStack {
             VStack(alignment: .leading) {
@@ -537,8 +553,14 @@ struct QuestionRowView: View {
             Spacer()
             
             VStack(alignment: .trailing) {
-                if let pending = question.pendingCount, pending > 0 {
-                    Text("未採点: \(pending)")
+                // ★★★ answerLogs から実際の未採点数を計算 ★★★
+                let actualPendingCount = answerLogs.filter { log in
+                    log.questionId == question.questionId &&
+                    log.status == "pending_review"
+                }.count
+                
+                if actualPendingCount > 0 {
+                    Text("未採点: \(actualPendingCount)")
                         .font(.caption2)
                         .fontWeight(.bold)
                         .padding(6)

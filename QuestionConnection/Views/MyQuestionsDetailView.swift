@@ -55,7 +55,7 @@ struct MyQuestionsDetailView: View {
                             // タブによって遷移先を分岐
                             if selectedTab == "essay" {
                                 NavigationLink(destination: AnswerManagementView(question: question).environmentObject(viewModel)) {
-                                    QuestionRowView(question: question)
+                                    QuestionRowView(question: question, answerLogs: viewModel.answerLogs)
                                 }
                                 // ★★★ 追加: 長押しメニュー ★★★
                                 .contextMenu {
@@ -71,7 +71,7 @@ struct MyQuestionsDetailView: View {
                                     .environmentObject(viewModel)
                                     .environmentObject(authViewModel)
                                 ) {
-                                    QuestionRowView(question: question)
+                                    QuestionRowView(question: question, answerLogs: viewModel.answerLogs)
                                 }
                                 // ★★★ 追加: 長押しメニュー ★★★
                                 .contextMenu {
@@ -128,6 +128,12 @@ struct MyQuestionsDetailView: View {
                 .background(Color(.systemBackground))
                 .cornerRadius(12)
                 .shadow(radius: 10)
+            }
+        }
+        .onAppear {
+            print("📊 answerLogs count: \(viewModel.answerLogs.count)")
+            for log in viewModel.answerLogs {
+                print("  - questionId: \(log.questionId), status: \(log.status)")
             }
         }
     }

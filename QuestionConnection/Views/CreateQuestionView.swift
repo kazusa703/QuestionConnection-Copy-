@@ -43,7 +43,7 @@ struct CreateQuestionView: View {
                     .frame(height: 50)
                     .background(Color.gray.opacity(0.1))
             }
-            
+           
             Form {
                 basicInfoSection
                 quizItemsSection
@@ -80,14 +80,14 @@ struct CreateQuestionView: View {
     private var basicInfoSection: some View {
         Section(header: Text("質問の基本情報")) {
             TextField("題名", text: $title)
-            
+           
             Picker("目的", selection: $purpose) {
                 Text("選択なし").tag("")
                 ForEach(viewModel.availablePurposes, id: \.self) { p in
                     Text(p).tag(p)
                 }
             }
-            
+           
             HStack {
                 TextField("タグ (追加)", text: $tagInput)
                 Button("追加") {
@@ -106,7 +106,7 @@ struct CreateQuestionView: View {
                     }
                 }
             }
-            
+           
             TextField("備考・説明", text: $remarks)
             TextField("全問正解者へのメッセージ", text: $dmInviteMessage)
         }
@@ -129,7 +129,7 @@ struct CreateQuestionView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                
+              
                 switch quizItems[index].type {
                 case .choice:
                     ChoiceQuestionEditor(item: Binding(
@@ -147,7 +147,7 @@ struct CreateQuestionView: View {
                         set: { quizItems[index] = $0 }
                     ))
                 }
-                
+              
                 if quizItems.count > 1 {
                     Button("この問題を削除", role: .destructive) {
                         withAnimation {
@@ -165,7 +165,7 @@ struct CreateQuestionView: View {
             Button("問題を追加") {
                 quizItems.append(QuizItem(id: UUID().uuidString, type: .choice, questionText: ""))
             }
-            
+           
             Section {
                 Button {
                     if authViewModel.isSignedIn {
@@ -201,16 +201,19 @@ struct CreateQuestionView: View {
             showAlert = true
             return false
         }
+       
+        // ▼▼▼ 修正: 目的の必須チェックを削除しました ▼▼▼
+        // 目的が未選択でも通過するように変更
         
         for (index, item) in quizItems.enumerated() {
             let qNum = index + 1
-            
+           
             if item.questionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 alertMessage = "問題 \(qNum) の文章が空白です。"
                 showAlert = true
                 return false
             }
-            
+           
             switch item.type {
             case .choice:
                 for (cIndex, choice) in item.choices.enumerated() {
@@ -225,7 +228,7 @@ struct CreateQuestionView: View {
                     showAlert = true
                     return false
                 }
-                
+              
             case .fillIn:
                 if item.fillInAnswers.isEmpty {
                     alertMessage = "問題 \(qNum) に穴埋め箇所がありません。"
@@ -240,21 +243,21 @@ struct CreateQuestionView: View {
                         return false
                     }
                 }
-                
+              
             case .essay:
                 break
             }
         }
-        
+       
         let hasEssayQuestion = quizItems.contains { $0.type == .essay }
         if hasEssayQuestion && !subscriptionManager.isPremium {
             alertMessage = "記述式問題の投稿はプレミアムプラン限定です。"
             showAlert = true
             return false
         }
-        
-        // ▼▼▼ ここから追加: NGワードチェック ▼▼▼
-        
+       
+        // ▼▼▼ NGワードチェック ▼▼▼
+       
         // 1. 基本情報のチェック
         let textToCheck = [title, remarks, dmInviteMessage]
         if case .blocked(let reason) = NGWordFilter.shared.checkMultiple(textToCheck) {
@@ -262,14 +265,14 @@ struct CreateQuestionView: View {
             showAlert = true
             return false
         }
-        
+       
         // 2. タグのチェック
         if case .blocked(let reason) = NGWordFilter.shared.checkMultiple(tags) {
             alertMessage = "タグに不適切な表現が含まれています。\n理由: \(reason)"
             showAlert = true
             return false
         }
-        
+       
         // 3. 問題文・選択肢などのチェック
         for (index, item) in quizItems.enumerated() {
             // 問題文
@@ -278,7 +281,7 @@ struct CreateQuestionView: View {
                 showAlert = true
                 return false
             }
-            
+           
             // 選択肢
             for choice in item.choices {
                 if case .blocked(let reason) = NGWordFilter.shared.check(choice.text) {
@@ -287,7 +290,7 @@ struct CreateQuestionView: View {
                     return false
                 }
             }
-            
+           
             // 穴埋めの正解
             for ans in item.fillInAnswers.values {
                 if case .blocked(let reason) = NGWordFilter.shared.check(ans) {
@@ -296,7 +299,7 @@ struct CreateQuestionView: View {
                     return false
                 }
             }
-            
+           
             // 模範解答
             if let model = item.modelAnswer, case .blocked(let reason) = NGWordFilter.shared.check(model) {
                 alertMessage = "問題 \(index + 1) の模範解答に不適切な表現が含まれています。\n理由: \(reason)"
@@ -304,9 +307,7 @@ struct CreateQuestionView: View {
                 return false
             }
         }
-        
-        // ▲▲▲ 追加ここまで ▲▲▲
-        
+       
         return true
     }
     
@@ -316,7 +317,7 @@ struct CreateQuestionView: View {
         } else {
             let currentCount = UserDefaults.standard.integer(forKey: "postCount") + 1
             UserDefaults.standard.set(currentCount, forKey: "postCount")
-            
+           
             if currentCount % 3 == 0 {
                 isAdLoading = true
                 adManager.showAd {
@@ -332,7 +333,7 @@ struct CreateQuestionView: View {
     private func executePostAPI() {
         // 投稿前に穴番号を振り直す
         let renumberedItems = renumberHolesInQuizItems(quizItems)
-        
+       
         Task {
             guard let uid = authViewModel.userSub else { return }
             let success = await viewModel.createQuestion(
@@ -344,7 +345,7 @@ struct CreateQuestionView: View {
                 purpose: purpose,
                 dmInviteMessage: dmInviteMessage
             )
-            
+           
             await MainActor.run {
                 if success {
                     showConfirmation = false
@@ -375,10 +376,10 @@ struct CreateQuestionView: View {
         var newItem = item
         let pattern = "\\[(\\d+)\\]"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return item }
-        
+       
         let text = item.questionText
         let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
-        
+       
         // 現在の穴番号を順番に取得
         var oldNumbers: [Int] = []
         for match in matches {
@@ -390,13 +391,13 @@ struct CreateQuestionView: View {
                 }
             }
         }
-        
+       
         // 番号のマッピングを作成（古い番号 -> 新しい番号）
         var numberMapping: [Int: Int] = [:]
         for (index, oldNum) in oldNumbers.enumerated() {
             numberMapping[oldNum] = index + 1
         }
-        
+       
         // テキスト内の穴番号を振り直す
         var newText = text
         for oldNum in oldNumbers.sorted().reversed() {
@@ -407,7 +408,7 @@ struct CreateQuestionView: View {
         newText = newText.replacingOccurrences(of: "[@@", with: "[")
         newText = newText.replacingOccurrences(of: "@@]", with: "]")
         newItem.questionText = newText
-        
+       
         // fillInAnswersのキーも振り直す
         var newFillInAnswers: [String: String] = [:]
         for (key, value) in item.fillInAnswers {
@@ -417,7 +418,7 @@ struct CreateQuestionView: View {
             }
         }
         newItem.fillInAnswers = newFillInAnswers
-        
+       
         return newItem
     }
     
@@ -442,9 +443,9 @@ struct ChoiceQuestionEditor: View {
                 } label: {
                     Image(systemName: item.correctAnswerId == item.choices[index].id ? "checkmark.circle.fill" : "circle")
                 }
-                
+              
                 TextField("選択肢", text: $item.choices[index].text)
-                
+              
                 if item.choices.count > 2 {
                     Button(role: .destructive) {
                         deleteChoice(at: index)
@@ -478,18 +479,18 @@ struct FillInQuestionEditor: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            
+           
             // 1. プレビューエリア
             VStack(alignment: .leading, spacing: 8) {
                 Text("プレビュー")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                
+              
                 HStack(alignment: .top, spacing: 4) {
                     Text("Q1.")
                         .font(.headline)
                         .fontWeight(.bold)
-                    
+                   
                     FillInQuestionText(text: tempText)
                 }
                 .padding()
@@ -497,19 +498,19 @@ struct FillInQuestionEditor: View {
                 .background(Color(UIColor.secondarySystemBackground))
                 .cornerRadius(12)
             }
-            
+           
             // 2. 問題文入力エリア
             VStack(alignment: .leading, spacing: 8) {
                 Text("穴ボタンを押すと穴埋め箇所を追加できます")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                
+              
                 // 編集用TextField + 穴ボタン
                 HStack(spacing: 12) {
                     TextField("文章を入力...", text: $tempText)
                         .textFieldStyle(.roundedBorder)
                         .frame(minHeight: 44)
-                    
+                   
                     Button(action: insertHole) {
                         Text("穴")
                             .font(.headline)
@@ -524,16 +525,16 @@ struct FillInQuestionEditor: View {
                     .contentShape(Circle())
                 }
             }
-            
+           
             Divider()
-            
+           
             // 3. 正解入力エリア
             if !item.fillInAnswers.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("正解を入力してください")
                         .font(.subheadline)
                         .fontWeight(.medium)
-                    
+                   
                     ForEach(Array(item.fillInAnswers.keys.sorted { sortKeys($0, $1) }), id: \.self) { key in
                         HStack(spacing: 16) {
                             Text(formatKeyForDisplay(key))
@@ -618,7 +619,7 @@ struct EssayQuestionEditor: View {
             TextEditor(text: $item.questionText)
                 .frame(height: 100)
                 .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.gray.opacity(0.5)))
-            
+           
             Text("模範解答（採点の参考に表示されます）")
             TextEditor(text: Binding(
                 get: { item.modelAnswer ?? "" },
@@ -774,7 +775,7 @@ struct QuestionConfirmationView: View {
                             .foregroundColor(.secondary)
                             .padding(.bottom, 4)
                     }
-                    
+                   
                     Button(action: onPost) {
                         HStack {
                             Spacer()
