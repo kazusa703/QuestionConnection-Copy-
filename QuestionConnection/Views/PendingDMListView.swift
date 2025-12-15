@@ -21,7 +21,8 @@ struct PendingDMListView: View {
                             .foregroundColor(.green)
                         Text("未送信のDMはありません")
                             .font(.headline)
-                        Text("全問正解した問題の出題者には\nすでにDMを送信済みです")
+                        // ★★★ 修正: メッセージを変更 ★★★
+                        Text("DMが可能な相手には\nすでにメッセージを送信済みです")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
@@ -53,7 +54,7 @@ struct PendingDMListView: View {
             }
             .navigationDestination(item: $selectedItem) { item in
                 InitialDMView(
-                    recipientId: item.authorId,
+                    recipientId: item.recipientId,  // ★ 変更: authorId → recipientId
                     questionTitle: item.questionTitle
                 )
                 .environmentObject(authViewModel)
@@ -71,14 +72,19 @@ struct PendingDMListView: View {
         dmViewModel.setAuthViewModel(authViewModel)
         await dmViewModel.fetchThreads(userId: myUserId)
 
-        // myGradedAnswers が空の場合は取得（引数なし）
+        // 自分が回答した履歴を取得
         if profileViewModel.myGradedAnswers.isEmpty {
             await profileViewModel.fetchMyGradedAnswers()
         }
-
+        
+        // ★★★ 追加: 自分の質問への回答履歴（出題者として）も取得 ★★★
+        // answerLogs は自分が作った質問への回答
+        // 既に取得済みならそのまま使用
+        
         pendingManager.fetchPendingDMs(
             myUserId: myUserId,
-            answersLogs: profileViewModel.myGradedAnswers,
+            myAnswersLogs: profileViewModel.myGradedAnswers,      // 回答者として
+            authorAnswersLogs: profileViewModel.answerLogs,       // 出題者として
             dmThreads: dmViewModel.threads
         )
     }
@@ -89,8 +95,8 @@ struct PendingDMRowView: View {
     @ObservedObject var profileViewModel: ProfileViewModel
     let onSendTap: () -> Void
 
-    @State private var authorNickname: String = "読み込み中..."
-    @State private var authorProfileImageUrl: String? = nil
+    @State private var recipientNickname: String = "読み込み中..."
+    @State private var recipientProfileImageUrl: String? = nil
 
     private var formattedDate: String {
         let isoString = item.completedAt
@@ -106,12 +112,31 @@ struct PendingDMRowView: View {
         displayFormatter.dateFormat = "M月d日"
         return displayFormatter.string(from: date)
     }
+    
+    // ★★★ 追加: 役割に応じたラベル ★★★
+    private var roleLabel: String {
+        switch item.role {
+        case .answerer:
+            return "あなたが全問正解"
+        case .author:
+            return "あなたが正解にした"
+        }
+    }
+    
+    private var roleLabelColor: Color {
+        switch item.role {
+        case .answerer:
+            return .green
+        case .author:
+            return .blue
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
                 // プロフィール画像
-                if let imageUrl = authorProfileImageUrl,
+                if let imageUrl = recipientProfileImageUrl,
                    let url = URL(string: imageUrl) {
                     AsyncImage(url: url) { phase in
                         switch phase {
@@ -131,8 +156,18 @@ struct PendingDMRowView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(authorNickname)
+                    Text(recipientNickname)
                         .font(.headline)
+                    
+                    // ★★★ 追加: 役割ラベル ★★★
+                    Text(roleLabel)
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(roleLabelColor.opacity(0.1))
+                        .foregroundColor(roleLabelColor)
+                        .cornerRadius(4)
 
                     HStack {
                         Image(systemName: "checkmark.circle.fill")
@@ -145,7 +180,7 @@ struct PendingDMRowView: View {
                     }
 
                     if !formattedDate.isEmpty {
-                        Text("正解日: \(formattedDate)")
+                        Text(item.role == .answerer ? "正解日: \(formattedDate)" : "採点日: \(formattedDate)")
                             .font(.caption)
                             .foregroundColor(.gray)
                     }
@@ -169,14 +204,14 @@ struct PendingDMRowView: View {
         }
         .padding(.vertical, 8)
         .task {
-            await loadAuthorInfo()
+            await loadRecipientInfo()
         }
     }
 
-    private func loadAuthorInfo() async {
-        let result = await profileViewModel.fetchNicknameAndImage(userId: item.authorId)
-        authorNickname = result.nickname.isEmpty ? "（未設定）" : result.nickname
-        authorProfileImageUrl = result.imageUrl
+    private func loadRecipientInfo() async {
+        let result = await profileViewModel.fetchNicknameAndImage(userId: item.recipientId)
+        recipientNickname = result.nickname.isEmpty ? "（未設定）" : result.nickname
+        recipientProfileImageUrl = result.imageUrl
     }
 
     private var defaultIcon: some View {

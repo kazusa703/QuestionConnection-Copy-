@@ -372,55 +372,61 @@ struct CreateQuestionView: View {
         }
     }
     
-    private func renumberHoles(in item: QuizItem) -> QuizItem {
-        var newItem = item
-        let pattern = "\\[(\\d+)\\]"
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return item }
-       
-        let text = item.questionText
-        let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
-       
-        // 現在の穴番号を順番に取得
-        var oldNumbers: [Int] = []
-        for match in matches {
-            if let numberRange = Range(match.range(at: 1), in: text) {
-                if let num = Int(text[numberRange]) {
-                    if !oldNumbers.contains(num) {
-                        oldNumbers.append(num)
+    // 穴番号を振り直す関数（修正版）
+        private func renumberHoles(in item: QuizItem) -> QuizItem {
+            var newItem = item
+            // 修正: エディタに合わせて [穴数字] を探す正規表現に変更
+            let pattern = "\\[穴(\\d+)\\]"
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { return item }
+           
+            let text = item.questionText
+            let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+           
+            // 現在の穴番号を順番に取得
+            var oldNumbers: [Int] = []
+            for match in matches {
+                if let numberRange = Range(match.range(at: 1), in: text) {
+                    if let num = Int(text[numberRange]) {
+                        if !oldNumbers.contains(num) {
+                            oldNumbers.append(num)
+                        }
                     }
                 }
             }
-        }
-       
-        // 番号のマッピングを作成（古い番号 -> 新しい番号）
-        var numberMapping: [Int: Int] = [:]
-        for (index, oldNum) in oldNumbers.enumerated() {
-            numberMapping[oldNum] = index + 1
-        }
-       
-        // テキスト内の穴番号を振り直す
-        var newText = text
-        for oldNum in oldNumbers.sorted().reversed() {
-            if let newNum = numberMapping[oldNum] {
-                newText = newText.replacingOccurrences(of: "[\(oldNum)]", with: "[@@\(newNum)@@]")
+           
+            // 番号のマッピングを作成（古い番号 -> 新しい番号）
+            var numberMapping: [Int: Int] = [:]
+            for (index, oldNum) in oldNumbers.enumerated() {
+                numberMapping[oldNum] = index + 1
             }
-        }
-        newText = newText.replacingOccurrences(of: "[@@", with: "[")
-        newText = newText.replacingOccurrences(of: "@@]", with: "]")
-        newItem.questionText = newText
-       
-        // fillInAnswersのキーも振り直す
-        var newFillInAnswers: [String: String] = [:]
-        for (key, value) in item.fillInAnswers {
-            let oldNum = extractNumber(from: key)
-            if let newNum = numberMapping[oldNum] {
-                newFillInAnswers["\(newNum)"] = value
+           
+            // テキスト内の穴番号を振り直す
+            var newText = text
+            // 後ろから置換していく（桁数が変わるズレを防ぐため）
+            for oldNum in oldNumbers.sorted().reversed() {
+                if let newNum = numberMapping[oldNum] {
+                    // 修正: [穴1] を [@@1@@] に一時置換
+                    newText = newText.replacingOccurrences(of: "[穴\(oldNum)]", with: "[@@\(newNum)@@]")
+                }
             }
+            // 修正: [@@1@@] を [穴1] に戻す
+            newText = newText.replacingOccurrences(of: "[@@", with: "[穴")
+            newText = newText.replacingOccurrences(of: "@@]", with: "]")
+            newItem.questionText = newText
+           
+            // fillInAnswersのキーも振り直す
+            var newFillInAnswers: [String: String] = [:]
+            for (key, value) in item.fillInAnswers {
+                let oldNum = extractNumber(from: key)
+                if let newNum = numberMapping[oldNum] {
+                    // キーも "穴1" の形式で保存する（サーバー側の仕様に合わせて統一）
+                    newFillInAnswers["穴\(newNum)"] = value
+                }
+            }
+            newItem.fillInAnswers = newFillInAnswers
+           
+            return newItem
         }
-        newItem.fillInAnswers = newFillInAnswers
-       
-        return newItem
-    }
     
     private func extractNumber(from key: String) -> Int {
         return Int(key.replacingOccurrences(of: "穴", with: "")) ?? (Int(key) ?? 0)
