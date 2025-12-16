@@ -14,7 +14,6 @@ struct BoardView: View {
     
     // タグ検索用
     @State private var selectedTags: [String] = []
-    @State private var tagInput: String = ""
 
     // キーワード検索
     @State private var searchTitle = ""
@@ -25,8 +24,8 @@ struct BoardView: View {
     
     // ランダム表示用の一時リスト
     @State private var randomQuestions: [Question] = []
-
-    // ★★★ 復活: ローカルでの即時反映用リスト ★★★
+    
+    // ローカルでの即時反映用リスト
     @State private var answeredQuestionIds: Set<String> = []
 
     enum SortOption {
@@ -44,8 +43,7 @@ struct BoardView: View {
             result = result.filter { $0.authorId != currentUserId }
         }
         
-        // ★★★ 修正: 両方のソースから回答済みを除外 ★★★
-        // ローカルの answeredQuestionIds と profileViewModel.answeredQuestionIds の両方をチェック
+        // 両方のソースから回答済みを除外
         result = result.filter { question in
             !answeredQuestionIds.contains(question.questionId) &&
             !profileViewModel.answeredQuestionIds.contains(question.questionId)
@@ -157,11 +155,17 @@ struct BoardView: View {
                         }
                         
                         if !selectedPurpose.isEmpty {
-                            FilterBadge(text: "目的: \(selectedPurpose)")
+                            FilterBadge(text: "目的: \(selectedPurpose)") {
+                                selectedPurpose = ""
+                            }
                         }
+                        
                         if showingOnlyBookmarks {
-                            FilterBadge(text: "ブックマーク中")
+                            FilterBadge(text: "ブックマーク中") {
+                                showingOnlyBookmarks = false
+                            }
                         }
+                        
                         ForEach(selectedTags, id: \.self) { tag in
                             FilterBadge(text: "#\(tag)") {
                                 removeTag(tag)
@@ -194,7 +198,6 @@ struct BoardView: View {
                 List {
                     ForEach(displayQuestions) { question in
                         ZStack(alignment: .leading) {
-                            // 1. 中身
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack {
                                     Text(question.title)
@@ -238,7 +241,6 @@ struct BoardView: View {
                             }
                             .padding(.vertical, 4)
                             
-                            // 2. リンク (透明)
                             NavigationLink(destination: QuestionDetailView(question: question).environmentObject(profileViewModel)) {
                                 EmptyView()
                             }
@@ -309,105 +311,13 @@ struct BoardView: View {
                 }
             }
         }
-        // フィルターシート
         .sheet(isPresented: $showingFilterSheet) {
-            NavigationStack {
-                Form {
-                    Section(header: Text("タイトルで検索")) {
-                        TextField("タイトルを入力", text: $searchTitle)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    
-                    Section(header: Text("問題番号で検索")) {
-                        TextField("問題番号を入力 (例: 12345)", text: $searchQuestionId)
-                            .textFieldStyle(.roundedBorder)
-                            .keyboardType(.asciiCapable)
-                    }
-                    
-                    Section(header: Text("目的で絞り込む")) {
-                        Picker("目的", selection: $selectedPurpose) {
-                            Text("指定なし").tag("")
-                            ForEach(viewModel.availablePurposes, id: \.self) { p in
-                                Text(p).tag(p)
-                            }
-                        }
-                    }
-                    
-                    Section(header: Text("タグで絞り込む (AND検索)")) {
-                        HStack {
-                            TextField("タグを入力 (例: swift)", text: $tagInput)
-                                .textFieldStyle(.roundedBorder)
-                                .submitLabel(.done)
-                                .onSubmit { addTagFromInput() }
-                            
-                            Button(action: addTagFromInput) {
-                                Image(systemName: "plus.circle.fill")
-                                    .font(.title2)
-                                    .foregroundColor(.blue)
-                            }
-                            .disabled(tagInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-                        
-                        if !selectedTags.isEmpty {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack {
-                                    ForEach(selectedTags, id: \.self) { tag in
-                                        HStack(spacing: 4) {
-                                            Text("#\(tag)")
-                                                .font(.subheadline)
-                                                .fontWeight(.bold)
-                                                .foregroundColor(.white)
-                                            
-                                            Button { removeTag(tag) } label: {
-                                                Image(systemName: "xmark")
-                                                    .font(.caption)
-                                                    .foregroundColor(.white)
-                                            }
-                                        }
-                                        .padding(.vertical, 4)
-                                        .padding(.horizontal, 8)
-                                        .background(Color.blue)
-                                        .cornerRadius(12)
-                                    }
-                                }
-                                .padding(.vertical, 4)
-                            }
-                        } else {
-                            Text("タグを追加すると、そのすべてのタグを含む質問だけが表示されます。")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    
-                    Section {
-                        Button(role: .destructive) {
-                            searchTitle = ""
-                            searchQuestionId = ""
-                            selectedPurpose = ""
-                            selectedTags.removeAll()
-                            tagInput = ""
-                            showingFilterSheet = false
-                        } label: {
-                            Text("条件をリセットして閉じる")
-                                .frame(maxWidth: .infinity, alignment: .center)
-                        }
-                    }
-                }
-                .navigationTitle("検索・絞り込み")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("完了") { showingFilterSheet = false }
-                    }
-                }
-            }
-            .presentationDetents([.medium, .large])
+            filterSheetContent
         }
         .task {
             viewModel.setAuthViewModel(authViewModel)
             await viewModel.fetchQuestions()
         }
-        // タブ復帰時に再フェッチ
         .onChange(of: navManager.tabSelection) { _, newValue in
             if newValue == 0 {
                 Task {
@@ -417,12 +327,9 @@ struct BoardView: View {
                 }
             }
         }
-        // 掲示板へ通知受信: ViewModelとローカル状態の両方を更新
         .onReceive(NotificationCenter.default.publisher(for: .boardShouldRefresh)) { note in
             if let qid = note.object as? String {
-                // ローカル状態に追加 (即時反映用)
                 answeredQuestionIds.insert(qid)
-                // ViewModelに追加 (全体反映用)
                 profileViewModel.markQuestionAsAnswered(questionId: qid)
             }
             Task {
@@ -431,28 +338,70 @@ struct BoardView: View {
                 if sortOption == .random { reshuffleRandomQuestions() }
             }
         }
-        // ViewModelの回答済みIDが増えたらランダムリストも更新
         .onChange(of: profileViewModel.answeredQuestionIds) { _, _ in
             if sortOption == .random { reshuffleRandomQuestions() }
         }
+    }
+    
+    // フィルターシート
+    private var filterSheetContent: some View {
+        NavigationStack {
+            Form {
+                Section(header: Text("タイトルで検索")) {
+                    TextField("タイトルを入力", text: $searchTitle)
+                        .textFieldStyle(.roundedBorder)
+                }
+                
+                Section(header: Text("問題番号で検索")) {
+                    TextField("問題番号を入力 (例: 12345)", text: $searchQuestionId)
+                        .textFieldStyle(.roundedBorder)
+                        .keyboardType(.asciiCapable)
+                }
+                
+                Section(header: Text("目的で絞り込む")) {
+                    Picker("目的", selection: $selectedPurpose) {
+                        Text("指定なし").tag("")
+                        ForEach(viewModel.availablePurposes, id: \.self) { p in
+                            Text(p).tag(p)
+                        }
+                    }
+                }
+                
+                Section(header: Text("タグで絞り込む (AND検索)")) {
+                    // ★★★ 修正: TagSelectionViewを使用 ★★★
+                    TagSelectionView(selectedTags: $selectedTags)
+                }
+                
+                Section {
+                    Button(role: .destructive) {
+                        searchTitle = ""
+                        searchQuestionId = ""
+                        selectedPurpose = ""
+                        selectedTags.removeAll()
+                        showingFilterSheet = false
+                    } label: {
+                        Text("条件をリセットして閉じる")
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                }
+            }
+            .navigationTitle("検索・絞り込み")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("完了") {
+                        showingFilterSheet = false
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 
     private func reshuffleRandomQuestions() {
         let pool = filteredPool
         let shuffled = pool.shuffled()
         randomQuestions = Array(shuffled.prefix(5))
-    }
-    
-    private func addTagFromInput() {
-        let trimmedTag = tagInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedTag.isEmpty else { return }
-        guard !selectedTags.contains(where: { $0.caseInsensitiveCompare(trimmedTag) == .orderedSame }) else {
-            tagInput = ""
-            return
-        }
-        guard selectedTags.count < 5 else { return }
-        selectedTags.append(trimmedTag)
-        tagInput = ""
     }
     
     private func removeTag(_ tag: String) {
