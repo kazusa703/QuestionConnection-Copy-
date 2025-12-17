@@ -4,6 +4,10 @@ struct InitialDMView: View {
     @StateObject private var viewModel = DMViewModel()
     @EnvironmentObject private var authViewModel: AuthViewModel
     @EnvironmentObject private var profileViewModel: ProfileViewModel
+    
+    // NavigationManager
+    @EnvironmentObject var navManager: NavigationManager
+    
     @Environment(\.dismiss) private var dismiss
 
     let recipientId: String
@@ -15,11 +19,8 @@ struct InitialDMView: View {
     @State private var alertTitle = ""
     @State private var alertMessage = ""
     
-    // ★★★ 修正: Thread -> DMThread に変更 ★★★
-    @State private var pendingThread: DMThread? = nil
-    @State private var navigateToThread: DMThread? = nil
+    @State private var sentThread: DMThread? = nil
 
-    // 表示用のトピック文（同じなら非表示）
     private var topicText: String? {
         let t = questionTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let nick = recipientNickname.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -30,7 +31,6 @@ struct InitialDMView: View {
 
     var body: some View {
         VStack(spacing: 15) {
-            // 全問正解した質問タイトルを表示
             VStack(alignment: .center, spacing: 8) {
                 HStack {
                     Image(systemName: "checkmark.circle.fill")
@@ -48,7 +48,6 @@ struct InitialDMView: View {
                             .lineLimit(2)
                             .truncationMode(.tail)
                     }
-                    
                     Spacer()
                 }
                 .padding(12)
@@ -89,18 +88,20 @@ struct InitialDMView: View {
         .padding()
         .navigationTitle("DM作成")
         .alert(alertTitle, isPresented: $showAlert) {
+            // ★★★ 修正箇所: OKボタンでDM一覧へ移動（会話画面は開かない） ★★★
             Button("OK") {
-                if alertTitle == "送信完了", let t = pendingThread {
-                    navigateToThread = t
+                if alertTitle == "送信完了" {
+                    // 1. このシートを閉じる
+                    dismiss()
+                    
+                    // 2. DMタブ(index: 2)へ切り替える
+                    navManager.tabSelection = 2
+                    
+                    // ※ 会話画面への自動遷移(.append)は削除しました
                 }
             }
         } message: {
             Text(alertMessage)
-        }
-        .navigationDestination(item: $navigateToThread) { thread in
-            ConversationView(thread: thread, viewModel: viewModel)
-                .environmentObject(authViewModel)
-                .environmentObject(profileViewModel)
         }
         .task {
             viewModel.setAuthViewModel(authViewModel)
@@ -119,19 +120,20 @@ struct InitialDMView: View {
         guard !text.isEmpty else { return }
 
         Task {
-            // ここで返ってくるのは DMThread? なので、pendingThread も DMThread? 型である必要があります
             let thread = await viewModel.sendInitialDMAndReturnThread(
                 recipientId: recipientId,
                 senderId: senderId,
                 questionTitle: questionTitle,
                 messageText: text
             )
-            if let thread {
+            
+            if let thread = thread {
                 let seenAt = Date().addingTimeInterval(1)
                 ThreadReadTracker.shared.markSeen(userId: senderId, threadId: thread.threadId, date: seenAt)
-                self.pendingThread = thread
+                
+                self.sentThread = thread
                 alertTitle = "送信完了"
-                alertMessage = "メッセージを送信しました。OKで会話に移動します。"
+                alertMessage = "メッセージを送信しました。OKでDM一覧に戻ります。"
             } else {
                 alertTitle = "エラー"
                 alertMessage = "メッセージの送信に失敗しました。"

@@ -11,17 +11,21 @@ struct GradingDetailView: View {
     // NavigationManager
     @EnvironmentObject var navManager: NavigationManager
     
-    // 記述式の採点状態（true: 正解, false: 不正解）
+    // 未送信リスト管理用
+    @EnvironmentObject var pendingDMManager: PendingDMManager
+    
+    // 記述式の採点状態
     @State private var essayGrades: [String: Bool] = [:]
     
     @State private var showGradingNotification = false
+    @State private var showInitialDMView = false
     
     // 記述式のみ抽出
     private var essayDetails: [AnswerDetail] {
         log.details.filter { $0.type == "essay" }
     }
     
-    // 自動採点（選択・穴埋め）のみ抽出
+    // 自動採点のみ抽出
     private var autoGradedDetails: [AnswerDetail] {
         log.details.filter { $0.type != "essay" }
     }
@@ -51,25 +55,35 @@ struct GradingDetailView: View {
         }
         .navigationTitle("回答詳細")
         .navigationBarTitleDisplayMode(.inline)
-        // ★★★ 修正: 通知の「メッセージを送る」アクションを変更 ★★★
+        // 通知シート
         .sheet(isPresented: $showGradingNotification) {
             GradingNotificationView(
                 isPresented: $showGradingNotification,
                 onSendMessage: {
-                    // シートを閉じる
                     showGradingNotification = false
-                    
-                    // 採点詳細画面を閉じる（プロフィール等のリストに戻る状態にする）
-                    dismiss()
-                    
-                    // DMタブ（インデックス2）へ移動して一覧を表示
-                    navManager.tabSelection = 2
+                    // リストを更新してからDM開始
+                    refreshPendingList()
+                    startDM()
                 },
                 onLater: {
                     showGradingNotification = false
+                    // ★★★ リストを更新してから閉じる ★★★
+                    refreshPendingList()
                     dismiss()
                 }
             )
+        }
+        // 初期メッセージ画面
+        .sheet(isPresented: $showInitialDMView) {
+            NavigationStack {
+                InitialDMView(
+                    recipientId: log.userId,
+                    questionTitle: log.questionTitle ?? "質問"
+                )
+                .environmentObject(authViewModel)
+                .environmentObject(profileViewModel)
+                .environmentObject(navManager)
+            }
         }
         .onAppear {
             initializeEssayGrades()
@@ -189,7 +203,6 @@ struct GradingDetailView: View {
                     Divider()
                     
                     HStack(spacing: 12) {
-                        // 不正解ボタン
                         Button(action: {
                             withAnimation { essayGrades[detail.itemId] = false }
                         }) {
@@ -208,7 +221,6 @@ struct GradingDetailView: View {
                             .cornerRadius(8)
                         }
                         
-                        // 正解ボタン
                         Button(action: {
                             withAnimation { essayGrades[detail.itemId] = true }
                         }) {
@@ -240,15 +252,10 @@ struct GradingDetailView: View {
         VStack(spacing: 12) {
             
             if log.status == "approved" {
-                // 承認済み（DM許可）→ DMへボタン
-                Button(action: {
-                    // 承認済みボタンを押した場合もDM一覧へ
-                    dismiss()
-                    navManager.tabSelection = 2
-                }) {
+                Button(action: startDM) {
                     HStack {
                         Image(systemName: "envelope.fill")
-                        Text("DM一覧へ")
+                        Text("DMへ")
                     }
                     .frame(maxWidth: .infinity)
                     .padding()
@@ -262,7 +269,6 @@ struct GradingDetailView: View {
                     .foregroundColor(.green)
                 
             } else if log.status == "rejected" || log.status == "rejected_auto" {
-                // 不正解または自動採点で不正解 → 採点済み（押せない）
                 Button(action: {}) {
                     HStack {
                         Image(systemName: "checkmark.seal.fill")
@@ -287,7 +293,6 @@ struct GradingDetailView: View {
                 }
                 
             } else {
-                // 未採点（pending_review）→ 採点を確定するボタン
                 Button(action: submitGrading) {
                     HStack {
                         if profileViewModel.isJudging {
@@ -305,7 +310,6 @@ struct GradingDetailView: View {
                 }
                 .disabled(!allEssaysGraded || profileViewModel.isJudging)
                 
-                // 注釈
                 if allEssaysGraded {
                     let allEssayApproved = essayGrades.values.allSatisfy { $0 }
                     let hasAutoGradedIncorrect = autoGradedDetails.contains { !$0.isCorrect }
@@ -365,18 +369,58 @@ struct GradingDetailView: View {
             
             if success {
                 let allEssayCorrect = essayGrades.values.allSatisfy { $0 == true }
-                // 自動採点で不正解があるかチェック
                 let hasAutoGradedIncorrect = autoGradedDetails.contains { !$0.isCorrect }
                 
-                // 記述式が正解 かつ 自動採点も全問正解 の場合のみ、DM許可通知へ
                 if allEssayCorrect && !hasAutoGradedIncorrect {
+                    // ★★★ リスト更新 ★★★
+                    refreshPendingList()
                     showGradingNotification = true
                 } else {
-                    // それ以外は通知せずに閉じる
                     dismiss()
                 }
             } else {
                 print("採点の送信に失敗しました")
+            }
+        }
+    }
+    
+    // ★★★ 修正: 正しいメソッドと引数を使用 ★★★
+    private func refreshPendingList() {
+        Task {
+            if let userId = authViewModel.userSub {
+                // 1. 自分が回答者の履歴更新
+                await profileViewModel.fetchMyGradedAnswers()
+                
+                // 2. 出題者としての履歴更新（現在の質問の回答一覧を再取得）
+                // 修正点: userIdではなくquestionIdを渡す
+                await profileViewModel.fetchAnswerLogs(questionId: log.questionId)
+                
+                // 3. 会話済みスレッドを更新
+                await dmViewModel.fetchThreads(userId: userId)
+                
+                await MainActor.run {
+                    pendingDMManager.fetchPendingDMs(
+                        myUserId: userId,
+                        myAnswersLogs: profileViewModel.myGradedAnswers, 
+                        authorAnswersLogs: profileViewModel.answerLogs,  
+                        dmThreads: dmViewModel.threads
+                    )
+                }
+            }
+        }
+    }
+    
+    private func startDM() {
+        Task {
+            if let thread = await dmViewModel.findDMThread(with: log.userId) {
+                await MainActor.run {
+                    dismiss()
+                    navManager.tabSelection = 2
+                }
+            } else {
+                await MainActor.run {
+                    self.showInitialDMView = true
+                }
             }
         }
     }

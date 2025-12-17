@@ -6,6 +6,11 @@ struct BlockCheckResponse: Decodable {
     let isBlockedByTarget: Bool
 }
 
+// レスポンスのスレッドID用（最小構成）
+struct MinimalThreadId: Codable {
+    let threadId: String
+}
+
 @MainActor
 class DMViewModel: ObservableObject {
 
@@ -13,17 +18,16 @@ class DMViewModel: ObservableObject {
     @Published var messages: [Message] = []
     @Published var isLoading = false
     
-    // エラーハンドリング用（NGワードチェック等で使用）
+    // エラーハンドリング用（NGワードチェックやブロック通知で使用）
     @Published var errorMessage: String = ""
     @Published var showError: Bool = false
 
-    // 既存エンドポイント
+    // APIエンドポイント定義
     private let dmsEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/dms")!
     private let threadsEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/threads")!
-    // ブロック確認用エンドポイント
     private let usersApiEndpoint = URL(string: "https://9mkgg5ufta.execute-api.ap-northeast-1.amazonaws.com/dev/users")!
 
-    // --- Auth 連携 (変更なし) ---
+    // --- Auth 連携 ---
     private var authViewModel: AuthViewModel?
 
     func setAuthViewModel(_ authViewModel: AuthViewModel) {
@@ -31,134 +35,41 @@ class DMViewModel: ObservableObject {
     }
 
     private func getAuthToken() async -> String? {
-        guard let authVM = self.authViewModel else {
-            print("DMViewModel: AuthViewModelが設定されていません。")
-            return nil
-        }
-        return await authVM.getValidIdToken()
+        return await authViewModel?.getValidIdToken()
     }
     
-    // 特定のユーザーとのスレッドを取得するメソッド
+    // MARK: - スレッド取得・検索
+    
+    // 特定のユーザーとのスレッドを取得（メモリ内検索 -> なければAPI取得）
     func findDMThread(with targetUserId: String) async -> DMThread? {
         guard let myId = authViewModel?.userSub else { return nil }
         
-        // まだスレッド一覧がなければ取得
+        // ローカルにデータがなければ取得
         if threads.isEmpty {
             await fetchThreads(userId: myId)
         }
         
-        // 相手が含まれるスレッドを探す
+        // メモリ上で検索
         if let existing = threads.first(where: { $0.participants.contains(targetUserId) }) {
             return existing
         }
         
-        // 念のため再取得して確認
+        // 見つからなければサーバーから最新を取得して再検索
         await fetchThreads(userId: myId)
         return threads.first(where: { $0.participants.contains(targetUserId) })
     }
     
-    // ブロック確認関数
-    private func checkIfBlockedByTarget(targetId: String) async -> Bool? {
-        guard let idToken = await getAuthToken() else {
-            print("ブロック確認: 認証トークン取得失敗")
-            return nil // エラー
-        }
-        
-        // GET /users/check-block?targetId={targetId}
-        var comps = URLComponents(url: usersApiEndpoint.appendingPathComponent("check-block"), resolvingAgainstBaseURL: true)
-        comps?.queryItems = [URLQueryItem(name: "targetId", value: targetId)]
-        
-        guard let url = comps?.url else {
-            print("ブロック確認: URL生成失敗")
-            return nil // エラー
-        }
-        
-        do {
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.setValue(idToken, forHTTPHeaderField: "Authorization")
-
-            let (data, response) = try await URLSession.shared.data(for: request)
-            
-            // 1. まず HTTPURLResponse にキャストできるか確認
-            guard let http = response as? HTTPURLResponse else {
-                print("ブロック確認API: 不正なレスポンス（HTTPレスポンスではありません）")
-                return nil // エラー
-            }
-            
-            // 2. 次にステータスコードを確認
-            guard http.statusCode == 200 else {
-                let snippet = String(data: data, encoding: .utf8) ?? ""
-                print("ブロック確認API時にサーバーエラー: \(http.statusCode) body: \(snippet.prefix(200))")
-                return nil // エラー
-            }
-
-            let result = try JSONDecoder().decode(BlockCheckResponse.self, from: data)
-            return result.isBlockedByTarget // true または false
-
-        } catch {
-            print("ブロック確認APIの取得またはデコードに失敗: \(error)")
-            return nil // エラー
-        }
-    }
-    
-    // メッセージ一覧を取得: GET /threads/{threadId}/messages
-    func fetchMessages(threadId: String) async {
-        guard !threadId.isEmpty else { return }
-        guard let idToken = await getAuthToken() else {
-            print("メッセージ一覧取得: 認証トークン取得失敗")
-            isLoading = false
-            return
-        }
-
-        isLoading = true
-        defer { isLoading = false }
-
-        let url = threadsEndpoint
-            .appendingPathComponent(threadId)
-            .appendingPathComponent("messages")
-
-        do {
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.setValue(idToken, forHTTPHeaderField: "Authorization")
-
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                print("メッセージ一覧取得: 不正なレスポンス")
-                return
-            }
-            guard http.statusCode == 200 else {
-                let snippet = String(data: data, encoding: .utf8) ?? ""
-                print("メッセージ一覧取得時にサーバーエラー: \(http.statusCode) body: \(snippet.prefix(200))")
-                return
-            }
-
-            self.messages = try JSONDecoder().decode([Message].self, from: data)
-            print("メッセージ一覧の取得に成功。件数: \(messages.count)")
-        } catch {
-            print("メッセージ一覧の取得またはデコードに失敗: \(error)")
-            self.messages = []
-        }
-    }
-
-    // スレッド一覧を取得: GET /threads?userId=...
+    // スレッド一覧を取得 API: GET /threads
     func fetchThreads(userId: String) async {
         guard !userId.isEmpty else { return }
-        guard let idToken = await getAuthToken() else {
-            print("スレッド一覧取得: 認証トークン取得失敗")
-            return
-        }
+        guard let idToken = await getAuthToken() else { return }
 
         isLoading = true
         defer { isLoading = false }
 
         var comps = URLComponents(url: threadsEndpoint, resolvingAgainstBaseURL: true)
         comps?.queryItems = [URLQueryItem(name: "userId", value: userId)]
-        guard let url = comps?.url else {
-            print("スレッド一覧取得: URL生成失敗")
-            return
-        }
+        guard let url = comps?.url else { return }
 
         do {
             var req = URLRequest(url: url)
@@ -166,37 +77,50 @@ class DMViewModel: ObservableObject {
             req.setValue(idToken, forHTTPHeaderField: "Authorization")
 
             let (data, response) = try await URLSession.shared.data(for: req)
-            guard let http = response as? HTTPURLResponse else {
-                print("スレッド一覧取得: 不正なレスポンス")
-                return
-            }
-            guard http.statusCode == 200 else {
-                let snippet = String(data: data, encoding: .utf8) ?? ""
-                print("スレッド一覧取得時にサーバーエラー: \(http.statusCode) body: \(snippet.prefix(200))")
-                return
-            }
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return }
 
-            let decoded = try JSONDecoder().decode([DMThread].self, from: data)
-            self.threads = decoded
-            print("スレッド一覧の取得に成功。件数: \(decoded.count)")
+            self.threads = try JSONDecoder().decode([DMThread].self, from: data)
         } catch {
-            print("スレッド一覧の取得またはデコードに失敗: \(error)")
+            print("Fetch threads failed: \(error)")
+        }
+    }
+    
+    // MARK: - メッセージ取得
+    
+    // メッセージ一覧取得 API: GET /threads/{id}/messages
+    func fetchMessages(threadId: String) async {
+        guard !threadId.isEmpty else { return }
+        guard let idToken = await getAuthToken() else {
+            isLoading = false
+            return
+        }
+
+        isLoading = true
+        defer { isLoading = false }
+
+        let url = threadsEndpoint.appendingPathComponent(threadId).appendingPathComponent("messages")
+
+        do {
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return }
+
+            self.messages = try JSONDecoder().decode([Message].self, from: data)
+        } catch {
+            print("Fetch messages failed: \(error)")
+            self.messages = []
         }
     }
 
-    // 初回DM（成功可否のみ）
-    func sendInitialDM(recipientId: String, senderId: String, questionTitle: String, messageText: String) async -> Bool {
-        if let _ = await sendInitialDMAndReturnThread(recipientId: recipientId, senderId: senderId, questionTitle: questionTitle, messageText: messageText) {
-            return true
-        } else {
-            return false
-        }
-    }
-
-    // 会話内送信（NGワードチェックを追加）
+    // MARK: - 送信処理
+    
+    // 既存のシンプルな送信メソッド（成功可否のみ返す）
+    // 会話画面などで使用されます
     func sendMessage(recipientId: String, senderId: String, questionTitle: String, messageText: String) async -> Bool {
-        
-        // 1. NGワードチェック
+        // NGワードチェック
         let trimmedText = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         let result = NGWordFilter.shared.check(trimmedText)
         
@@ -206,14 +130,13 @@ class DMViewModel: ObservableObject {
             return false
         }
         
-        // 2. ブロック確認と送信処理
-        return await sendInitialDM(recipientId: recipientId, senderId: senderId, questionTitle: questionTitle, messageText: messageText)
+        // 実際には下で定義するメソッドを呼ぶが、戻り値をBoolにする
+        let thread = await sendInitialDMAndReturnThread(recipientId: recipientId, senderId: senderId, questionTitle: questionTitle, messageText: messageText)
+        return thread != nil
     }
 
-    // 最小レスポンス用（{ "threadId": "..." } に対応）
-    struct MinimalThreadId: Codable { let threadId: String }
-
-    // sendInitialDMAndReturnThread 関数
+    // ★★★ InitialDMView / ConversationView から呼ばれる高機能送信メソッド ★★★
+    // スレッドオブジェクトを返すため、送信後の画面遷移に使えます
     func sendInitialDMAndReturnThread(recipientId: String,
                                       senderId: String,
                                       questionTitle: String,
@@ -235,17 +158,17 @@ class DMViewModel: ObservableObject {
         
         if isBlocked == nil {
             print("DM送信中止: ブロック状態の確認に失敗しました。")
-            return nil // エラー
+            return nil
         }
         
         if isBlocked == true {
             print("DM送信中止: 相手からブロックされています。")
+            self.errorMessage = "相手からブロックされているため送信できません"
+            self.showError = true
             return nil
         }
-        // --- ブロック確認ここまで ---
 
-
-        // --- 2. ブロックされていなければDMを送信 ---
+        // --- 2. DMを送信 ---
         var messageType = "text"
         if voiceData != nil {
             messageType = "voice"
@@ -253,19 +176,15 @@ class DMViewModel: ObservableObject {
             messageType = "image"
         }
         
-        // データをBase64に変換
-        let voiceBase64String = voiceData?.base64EncodedString()
-        let imageBase64String = imageData?.base64EncodedString()
-        
         let dmPayload = DM(
             recipientId: recipientId,
             senderId: senderId,
             questionTitle: questionTitle,
             messageText: messageText,
             messageType: messageType,
-            voiceBase64: voiceBase64String,
+            voiceBase64: voiceData?.base64EncodedString(),
             voiceDuration: duration,
-            imageBase64: imageBase64String
+            imageBase64: imageData?.base64EncodedString()
         )
 
         do {
@@ -278,54 +197,72 @@ class DMViewModel: ObservableObject {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse,
                   (http.statusCode == 200 || http.statusCode == 201) else {
-                let snippet = String(data: data, encoding: .utf8) ?? ""
-                print("DM送信時に予期せぬステータスコード: \(String(describing: (response as? HTTPURLResponse)?.statusCode)) body: \(snippet.prefix(200))")
                 return nil
             }
 
-            // 1) APIが Thread 相当JSONを返す場合
+            // 成功時のレスポンス処理
+            
+            // パターンA: スレッドそのものが返ってくる場合
             if let t = try? JSONDecoder().decode(DMThread.self, from: data) {
-                print("DM送信に成功（ThreadデコードOK）。threadId=\(t.threadId)")
                 return t
             }
 
-            // 2) 最小構成 { "threadId": "..." } を返す場合
+            // パターンB: { "threadId": "..." } だけが返ってくる場合
             var returnedThreadId: String? = nil
             if let m = try? JSONDecoder().decode(MinimalThreadId.self, from: data) {
                 returnedThreadId = m.threadId
             }
 
-            // 3) フォールバック
+            // スレッドを特定するために一覧を再取得（フォールバック）
             if let myUserId = authViewModel?.userSub {
-                try? await Task.sleep(nanoseconds: 300_000_000) // 0.3s
-                for attempt in 1...2 {
-                    await fetchThreads(userId: myUserId)
-                    if let tid = returnedThreadId, let found = threads.first(where: { $0.threadId == tid }) {
-                        print("DM送信フォールバック成功(id一致, attempt \(attempt)) threadId=\(found.threadId)")
-                        return found
-                    }
-                    let pairSet = Set([recipientId, senderId])
-                    if let byPairAndTitle = threads
-                        .filter({ Set($0.participants) == pairSet && $0.questionTitle == questionTitle })
-                        .max(by: { $0.lastUpdated < $1.lastUpdated }) {
-                        print("DM送信フォールバック成功(pair+title, attempt \(attempt)) threadId=\(byPairAndTitle.threadId)")
-                        return byPairAndTitle
-                    }
-                    if let byPairOnly = threads
-                        .filter({ Set($0.participants) == pairSet })
-                        .max(by: { $0.lastUpdated < $1.lastUpdated }) {
-                        print("DM送信フォールバック成功(pairのみ, attempt \(attempt)) threadId=\(byPairOnly.threadId)")
-                        return byPairOnly
-                    }
-                    try? await Task.sleep(nanoseconds: 300_000_000) // 0.3s
+                // 少し待機（DB反映待ち）
+                try? await Task.sleep(nanoseconds: 300_000_000) // 0.3秒
+                
+                await fetchThreads(userId: myUserId)
+                
+                // threadIdで検索
+                if let tid = returnedThreadId, let found = threads.first(where: { $0.threadId == tid }) {
+                    return found
+                }
+                
+                // 見つからなければ参加者ペアとタイトルで検索
+                let pairSet = Set([recipientId, senderId])
+                // 最新のものから探す
+                if let found = threads.sorted(by: { $0.lastUpdated > $1.lastUpdated })
+                    .first(where: { Set($0.participants) == pairSet }) {
+                    return found
                 }
             }
 
-            print("DM送信は成功した可能性があるが、Threadの特定に失敗しました。")
             return nil
 
         } catch {
-            print("DM送信APIへのリクエスト中にエラー: \(error)")
+            print("DM送信エラー: \(error)")
+            return nil
+        }
+    }
+    
+    // MARK: - 内部ヘルパー
+    
+    // ブロック確認 API: GET /users/check-block
+    private func checkIfBlockedByTarget(targetId: String) async -> Bool? {
+        guard let idToken = await getAuthToken() else { return nil }
+        
+        var comps = URLComponents(url: usersApiEndpoint.appendingPathComponent("check-block"), resolvingAgainstBaseURL: true)
+        comps?.queryItems = [URLQueryItem(name: "targetId", value: targetId)]
+        guard let url = comps?.url else { return nil }
+        
+        do {
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.setValue(idToken, forHTTPHeaderField: "Authorization")
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
+
+            let result = try JSONDecoder().decode(BlockCheckResponse.self, from: data)
+            return result.isBlockedByTarget
+        } catch {
             return nil
         }
     }
