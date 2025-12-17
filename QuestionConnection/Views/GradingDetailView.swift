@@ -8,13 +8,13 @@ struct GradingDetailView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
     @Environment(\.dismiss) private var dismiss
     
+    // NavigationManager
+    @EnvironmentObject var navManager: NavigationManager
+    
     // 記述式の採点状態（true: 正解, false: 不正解）
     @State private var essayGrades: [String: Bool] = [:]
     
     @State private var showGradingNotification = false
-    @State private var navigateToDM = false
-    @State private var createdThread: DMThread?
-    @State private var showInitialDMView = false
     
     // 記述式のみ抽出
     private var essayDetails: [AnswerDetail] {
@@ -51,35 +51,25 @@ struct GradingDetailView: View {
         }
         .navigationTitle("回答詳細")
         .navigationBarTitleDisplayMode(.inline)
+        // ★★★ 修正: 通知の「メッセージを送る」アクションを変更 ★★★
         .sheet(isPresented: $showGradingNotification) {
             GradingNotificationView(
                 isPresented: $showGradingNotification,
                 onSendMessage: {
+                    // シートを閉じる
                     showGradingNotification = false
-                    startDM()
+                    
+                    // 採点詳細画面を閉じる（プロフィール等のリストに戻る状態にする）
+                    dismiss()
+                    
+                    // DMタブ（インデックス2）へ移動して一覧を表示
+                    navManager.tabSelection = 2
                 },
                 onLater: {
                     showGradingNotification = false
                     dismiss()
                 }
             )
-        }
-        .sheet(isPresented: $showInitialDMView) {
-            NavigationStack {
-                InitialDMView(
-                    recipientId: log.userId,
-                    questionTitle: log.questionTitle ?? "質問"
-                )
-                .environmentObject(authViewModel)
-                .environmentObject(profileViewModel)
-            }
-        }
-        .navigationDestination(isPresented: $navigateToDM) {
-            if let thread = createdThread {
-                ConversationView(thread: thread, viewModel: dmViewModel)
-                    .environmentObject(authViewModel)
-                    .environmentObject(profileViewModel)
-            }
         }
         .onAppear {
             initializeEssayGrades()
@@ -248,19 +238,22 @@ struct GradingDetailView: View {
     
     private var submitButtonSection: some View {
         VStack(spacing: 12) {
-            // ★★★ 修正: ステータスに応じてボタンを切り替え ★★★
             
             if log.status == "approved" {
                 // 承認済み（DM許可）→ DMへボタン
-                Button(action: startDM) {
+                Button(action: {
+                    // 承認済みボタンを押した場合もDM一覧へ
+                    dismiss()
+                    navManager.tabSelection = 2
+                }) {
                     HStack {
                         Image(systemName: "envelope.fill")
-                        Text("DMへ")
+                        Text("DM一覧へ")
                     }
-                    .frame(maxWidth: . infinity)
+                    .frame(maxWidth: .infinity)
                     .padding()
                     .background(Color.green)
-                    .foregroundColor(. white)
+                    .foregroundColor(.white)
                     .cornerRadius(12)
                 }
                 
@@ -281,7 +274,7 @@ struct GradingDetailView: View {
                     .foregroundColor(.white)
                     .cornerRadius(12)
                 }
-                . disabled(true)
+                .disabled(true)
                 
                 if log.status == "rejected_auto" {
                     Text("✓ 採点済み - 自動採点で不正解のためDMはできません")
@@ -338,17 +331,17 @@ struct GradingDetailView: View {
                         }
                     } else {
                         Text("※ 「不正解」として通知されます。DMはできません。")
-                            . font(.caption)
-                            . foregroundColor(.red)
+                            .font(.caption)
+                            .foregroundColor(.red)
                     }
                 } else {
                     Text("すべての記述式問題を判定してください")
                         .font(.caption)
-                        .foregroundColor(. secondary)
+                        .foregroundColor(.secondary)
                 }
             }
         }
-        .padding(. top, 20)
+        .padding(.top, 20)
     }
     
     // MARK: - Logic
@@ -363,7 +356,6 @@ struct GradingDetailView: View {
         }
     }
     
-    // ★★★ 修正: 判定ロジックの変更 ★★★
     private func submitGrading() {
         Task {
             let success = await profileViewModel.submitEssayGrades(
@@ -376,30 +368,15 @@ struct GradingDetailView: View {
                 // 自動採点で不正解があるかチェック
                 let hasAutoGradedIncorrect = autoGradedDetails.contains { !$0.isCorrect }
                 
-                // 記述式が正解 かつ 自動採点も全問正解 の場合のみ、DM許可画面へ
+                // 記述式が正解 かつ 自動採点も全問正解 の場合のみ、DM許可通知へ
                 if allEssayCorrect && !hasAutoGradedIncorrect {
                     showGradingNotification = true
                 } else {
-                    // それ以外（自動採点ミスあり、または記述式ミスあり）は、通知せずに閉じる
+                    // それ以外は通知せずに閉じる
                     dismiss()
                 }
             } else {
                 print("採点の送信に失敗しました")
-            }
-        }
-    }
-    
-    private func startDM() {
-        Task {
-            if let thread = await dmViewModel.findDMThread(with: log.userId) {
-                await MainActor.run {
-                    self.createdThread = thread
-                    self.navigateToDM = true
-                }
-            } else {
-                await MainActor.run {
-                    self.showInitialDMView = true
-                }
             }
         }
     }
