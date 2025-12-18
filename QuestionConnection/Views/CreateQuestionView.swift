@@ -32,8 +32,11 @@ struct CreateQuestionView: View {
     
     @State private var showConfirmation = false
     
-    // ★★★ タグ選択シート用の状態変数を追加 ★★★
+    // タグ選択シート用の状態変数
     @State private var showTagSheet = false
+    
+    // ★★★ 1. ガイド表示用の状態変数を追加 ★★★
+    @State private var showGuide = false
     
     var shouldShowBanner: Bool {
         !subscriptionManager.isPremium
@@ -55,6 +58,24 @@ struct CreateQuestionView: View {
         }
         .navigationTitle("作成")
         .navigationBarTitleDisplayMode(.inline)
+        // ★★★ 2. ツールバーの設定 ★★★
+        .toolbar {
+            // タイトル（作成）の横に「？」ボタンを配置
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 6) {
+                    Text("作成")
+                        .font(.headline)
+                    
+                    Button(action: {
+                        showGuide = true
+                    }) {
+                        Image(systemName: "questionmark.circle")
+                            .font(.subheadline)
+                            .foregroundColor(.blue)
+                    }
+                }
+            }
+        }
         .alert("通知", isPresented: $showAlert) {
             Button("OK") {}
         } message: {
@@ -73,9 +94,13 @@ struct CreateQuestionView: View {
                 onPost: executeFinalPost
             )
         }
-        // ★★★ タグ選択シート ★★★
+        // タグ選択シート
         .sheet(isPresented: $showTagSheet) {
             TagSelectionSheet(selectedTags: $tags)
+        }
+        // ★★★ 3. ガイド画面のシート ★★★
+        .sheet(isPresented: $showGuide) {
+            QuestionCreationGuideView()
         }
         .task {
             viewModel.setAuthViewModel(authViewModel)
@@ -100,7 +125,7 @@ struct CreateQuestionView: View {
                 TextField("全問正解者へのメッセージ", text: $dmInviteMessage)
             }
             
-            // ★★★ タグセクション（シート表示） ★★★
+            // タグセクション（シート表示）
             Section(header: Text("タグ (任意・最大5個)")) {
                 // タグ追加ボタン
                 Button {
@@ -167,7 +192,7 @@ struct CreateQuestionView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-            
+                
                 switch quizItems[index].type {
                 case .choice:
                     ChoiceQuestionEditor(item: Binding(
@@ -185,7 +210,6 @@ struct CreateQuestionView: View {
                         set: { quizItems[index] = $0 }
                     ))
                 }
-            
                 if quizItems.count > 1 {
                     Button("この問題を削除", role: .destructive) {
                         withAnimation {
@@ -477,9 +501,9 @@ struct ChoiceQuestionEditor: View {
                 } label: {
                     Image(systemName: item.correctAnswerId == item.choices[index].id ? "checkmark.circle.fill" : "circle")
                 }
-            
+                
                 TextField("選択肢", text: $item.choices[index].text)
-            
+                
                 if item.choices.count > 2 {
                     Button(role: .destructive) {
                         deleteChoice(at: index)
@@ -510,6 +534,8 @@ struct ChoiceQuestionEditor: View {
 struct FillInQuestionEditor: View {
     @Binding var item: QuizItem
     @State private var tempText: String = ""
+    @State private var showDeleteAlert = false
+    @State private var holeToDelete: Int? = nil
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -570,46 +596,108 @@ struct FillInQuestionEditor: View {
                         .fontWeight(.medium)
                     
                     ForEach(Array(item.fillInAnswers.keys.sorted { sortKeys($0, $1) }), id: \.self) { key in
-                        HStack(spacing: 16) {
-                            Text(formatKeyForDisplay(key))
-                                .font(.title3)
-                                .fontWeight(.medium)
-                                .foregroundColor(.primary)
-                                .frame(width: 30, alignment: .leading)
-                            
-                            TextField("正解", text: Binding(
+                        HStack(spacing: 12) {
+                            FillInBoxSmall(number: Int(key) ?? 0)
+                            TextField("正解を入力", text: Binding(
                                 get: { item.fillInAnswers[key] ?? "" },
                                 set: { item.fillInAnswers[key] = $0 }
                             ))
-                            .textFieldStyle(.roundedBorder)
+                            .font(.body)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .frame(height: 40)
+                            .background(Color(UIColor.secondarySystemBackground))
+                            .cornerRadius(8)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                            )
+                            Button(role: .destructive) {
+                                holeToDelete = Int(key) ?? 0
+                                showDeleteAlert = true
+                            } label: {
+                                Image(systemName: "trash")
+                                    .foregroundColor(.red)
+                            }
+                            .buttonStyle(PlainButtonStyle())
                         }
                     }
                 }
             }
         }
+        .padding(.vertical, 8)
         .contentShape(Rectangle())
         .onTapGesture { }
-        .padding(.vertical, 8)
         .onAppear {
-            tempText = item.questionText
+            tempText = convertOldHoleFormat(item.questionText)
+            convertOldFillInAnswers()
         }
         .onChange(of: tempText) { _, newValue in
             item.questionText = newValue
             syncAnswers()
         }
+        .alert("削除の確認", isPresented: $showDeleteAlert) {
+            Button("キャンセル", role: .cancel) {
+                holeToDelete = nil
+            }
+            Button("削除", role: .destructive) {
+                if let number = holeToDelete {
+                    deleteHole(number: number)
+                }
+                holeToDelete = nil
+            }
+        } message: {
+            if let number = holeToDelete {
+                Text("(\(number)) を削除しますか？")
+            }
+        }
+    }
+    
+    func convertOldFillInAnswers() {
+        var newAnswers: [String: String] = [:]
+        for (key, value) in item.fillInAnswers {
+            let newKey = key.replacingOccurrences(of: "穴", with: "")
+            newAnswers[newKey] = value
+        }
+        if newAnswers != item.fillInAnswers {
+            item.fillInAnswers = newAnswers
+        }
     }
     
     func insertHole() {
-        let holeCount = item.fillInAnswers.count + 1
-        let holeTag = "[穴\(holeCount)]"
+        let nextNumber = findNextHoleNumber()
+        let holeTag = "[\(nextNumber)]"
         tempText += holeTag
     }
     
+    func findNextHoleNumber() -> Int {
+        let pattern = "\\[(\\d+)\\]"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return 1 }
+        let matches = regex.matches(in: tempText, range: NSRange(tempText.startIndex..., in: tempText))
+        var existingNumbers: Set<Int> = []
+        for match in matches {
+            if let range = Range(match.range(at: 1), in: tempText) {
+                if let num = Int(tempText[range]) {
+                    existingNumbers.insert(num)
+                }
+            }
+        }
+        var nextNumber = 1
+        while existingNumbers.contains(nextNumber) {
+            nextNumber += 1
+        }
+        return nextNumber
+    }
+    
+    func deleteHole(number: Int) {
+        tempText = tempText.replacingOccurrences(of: "[\(number)]", with: "")
+        item.fillInAnswers.removeValue(forKey: "\(number)")
+    }
+    
     func syncAnswers() {
-        let pattern = "\\[(穴\\d+)\\]"
+        let pattern = "\\[(\\d+)\\]"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
         let matches = regex.matches(in: tempText, range: NSRange(tempText.startIndex..., in: tempText))
-        
         var foundKeys = Set<String>()
         for match in matches {
             if let range = Range(match.range(at: 1), in: tempText) {
@@ -623,23 +711,10 @@ struct FillInQuestionEditor: View {
         item.fillInAnswers = item.fillInAnswers.filter { foundKeys.contains($0.key) }
     }
     
-    private func formatKeyForDisplay(_ key: String) -> String {
-        let numberString = key.replacingOccurrences(of: "穴", with: "")
-        let map = ["1":"①", "2":"②", "3":"③", "4":"④", "5":"⑤", "6":"⑥", "7":"⑦", "8":"⑧", "9":"⑨", "10":"⑩"]
-        if let mark = map[numberString] {
-            return mark
-        }
-        return "(\(numberString))"
-    }
-    
     private func sortKeys(_ key1: String, _ key2: String) -> Bool {
-        let num1 = Int(key1.replacingOccurrences(of: "穴", with: "")) ?? 0
-        let num2 = Int(key2.replacingOccurrences(of: "穴", with: "")) ?? 0
+        let num1 = Int(key1) ?? 0
+        let num2 = Int(key2) ?? 0
         return num1 < num2
-    }
-    
-    private func extractNumber(from key: String) -> Int {
-        return Int(key.replacingOccurrences(of: "穴", with: "")) ?? (Int(key) ?? 0)
     }
 }
 
@@ -741,7 +816,7 @@ struct QuestionConfirmationView: View {
                                 }
                                 
                                 if item.type == .fillIn {
-                                    FillInQuestionText(text: item.questionText, font: .body.bold())
+                                    FillInQuestionTextOutlined(text: item.questionText, font: .body.bold())
                                 } else {
                                     Text(item.questionText)
                                         .font(.body)
@@ -761,7 +836,7 @@ struct QuestionConfirmationView: View {
                                         VStack(alignment: .leading, spacing: 4) {
                                             ForEach(Array(item.fillInAnswers.keys.sorted { (Int($0) ?? 0) < (Int($1) ?? 0) }), id: \.self) { key in
                                                 HStack(spacing: 8) {
-                                                    FillInBoxSmall(number: Int(key) ?? 0)
+                                                    FillInAnswerBox(number: Int(key) ?? 0)
                                                     Text("= \(item.fillInAnswers[key] ?? "")")
                                                         .font(.caption)
                                                         .foregroundColor(.secondary)
@@ -854,18 +929,12 @@ struct QuestionConfirmationView: View {
     }
 }
 
-
-// ★★★ 簡易FlowLayout（CreateQuestionView内で使用） ★★★
+// 簡易FlowLayout（CreateQuestionView内で使用）
 struct FlowLayoutView<Content: View>: View {
     let spacing: CGFloat
     @ViewBuilder let content: () -> Content
     
     var body: some View {
-        // 注: 完全なFlowLayoutではありませんが、簡易的に横並びを表現する例です
-        // 実際にはちゃんとしたFlowLayoutの実装を使うか、
-        // TagFlowLayoutを使い回すことを推奨します。
-        // ここではエラー解消のため簡易的にLazyVStackにしていますが、
-        // 必要に応じて TagFlowLayout をここでも使ってください。
         TagFlowLayout(spacing: spacing) {
             content()
         }
