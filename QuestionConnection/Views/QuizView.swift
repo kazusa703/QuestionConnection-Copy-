@@ -371,7 +371,7 @@ struct FillInQuestionView: View {
                 ForEach(Array(item.fillInAnswers.keys.sorted { sortKeys($0, $1) }), id: \.self) { key in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 4) {
-                            FillInBoxSmall(number: extractNumber(from: key))
+                            FillInNumberBox(number: extractNumber(from: key)) // ← これに変更
                             Text("の回答:")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
